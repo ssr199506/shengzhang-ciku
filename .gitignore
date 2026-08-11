@@ -1,0 +1,6 @@
+# 数据与产物（不入库）
+*.csv
+*.png
+out/
+out_real/
+__pycache__/
