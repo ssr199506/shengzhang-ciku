@@ -103,7 +103,18 @@ _CLOUD_HEAD = r'''<!doctype html>
   #bar{position:fixed;top:0;left:0;right:0;height:42px;background:#fff;border-bottom:1px solid #e1e4e8;
        display:flex;align-items:center;gap:18px;padding:0 16px;z-index:60;font-size:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
   #bar b{font-size:15px;}
-  #hint{color:#8a93a0;font-size:12.5px;}
+  #hint{color:#8a93a0;font-size:12.5px;flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+  #search{margin-left:auto;width:190px;padding:6px 10px;border:1px solid #cdd3dc;border-radius:8px;
+          font-size:13px;outline:none;flex:none;}
+  #search:focus{border-color:#ff2d55;}
+  #sres{position:fixed;top:46px;right:12px;width:250px;max-height:70vh;overflow:auto;background:#fff;
+        border:1px solid #cdd3dc;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.18);display:none;
+        z-index:130;padding:6px 0;font-size:13px;}
+  #sres.show{display:block;}
+  .sitem{padding:7px 14px;cursor:pointer;display:flex;justify-content:space-between;gap:10px;align-items:center;}
+  .sitem:hover{background:#fff2f5;}
+  .sitem .c{color:#ff2d55;font-weight:700;font-variant-numeric:tabular-nums;}
+  .sempty{padding:9px 14px;color:#9aa3af;}
   #stage{position:absolute;top:42px;left:0;right:0;bottom:0;overflow:auto;}
   #canvas{position:relative;width:1600px;height:1000px;background:#fff;margin:18px auto;
           transform-origin:top left;box-shadow:0 2px 14px rgba(0,0,0,.08);}
@@ -132,7 +143,9 @@ _CLOUD_HEAD = r'''<!doctype html>
 <div id="bar">
   <b>生长词库 · 互动词云</b>
   <span id="hint">单击词语 = 选中（变色）&nbsp;·&nbsp; 双击 = 打开匹配清单 &nbsp;·&nbsp; 拖拽面板标题栏可移动</span>
+  <input id="search" placeholder="搜索词语…">
 </div>
+<div id="sres"></div>
 <div id="stage"><div id="canvas"></div></div>
 <div id="panel">
   <div id="phead"><span id="ptitle"></span><span id="pcnt"></span><span id="pclose">&times;</span></div>
@@ -196,13 +209,39 @@ function openPanel(word){
   }
   panel.classList.add('show');
   const r = selEl ? selEl.getBoundingClientRect() : {right: 200, top: 120};
-  let x = r.right + 10, y = Math.max(54, r.top);
-  x = Math.min(x, window.innerWidth - 396);
-  y = Math.min(y, window.innerHeight - 120);
+  let x = r.right + 10;
+  x = Math.min(x, window.innerWidth - panel.offsetWidth - 4);
+  // 纵向强制居中屏幕中线：点屏幕下方的词时，面板也不会被挤出可视区
+  let y = Math.max(46, (window.innerHeight - panel.offsetHeight) / 2);
   panel.style.left = x + 'px';
   panel.style.top = y + 'px';
 }
 document.getElementById('pclose').addEventListener('click', () => panel.classList.remove('show'));
+
+// ---------------------------------------------------------------- 搜索栏
+const search = document.getElementById('search');
+const sres = document.getElementById('sres');
+search.addEventListener('click', e => e.stopPropagation());
+sres.addEventListener('click', e => e.stopPropagation());
+search.addEventListener('input', () => {
+  const kw = search.value.trim();
+  if (!kw){ sres.classList.remove('show'); sres.innerHTML = ''; return; }
+  const hits = Object.keys(DATA.matches)
+    .filter(w => w.includes(kw))
+    .sort((a, b) => DATA.matches[b].count - DATA.matches[a].count);
+  if (!hits.length){ sres.innerHTML = '<div class="sempty">无匹配词语</div>'; sres.classList.add('show'); return; }
+  const frag = document.createDocumentFragment();
+  hits.forEach(w => {
+    const d = document.createElement('div');
+    d.className = 'sitem';
+    d.innerHTML = '<span>' + esc(w) + '</span><span class="c">' + DATA.matches[w].count + '</span>';
+    d.addEventListener('click', () => openPanel(w));
+    frag.appendChild(d);
+  });
+  sres.innerHTML = '';
+  sres.appendChild(frag);
+  sres.classList.add('show');
+});
 
 let drag = null;
 phead.addEventListener('mousedown', e => {
@@ -224,6 +263,7 @@ window.addEventListener('mouseup', () => { drag = null; phead.classList.remove('
 stage.addEventListener('click', () => {
   if (selEl){ selEl.classList.remove('sel'); selEl = null; }
   panel.classList.remove('show');
+  sres.classList.remove('show');
 });
 </script>
 </body>
