@@ -206,30 +206,27 @@ def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True
         right_conc = (max(w_ for _, w_ in groups.values()) / total_r) if total_r > 0 else 0.0
         binding = max(left_conc, right_conc)
 
-        # ---- 复合熵（2.1.10 按用户最终规则）----
-        # 邻居三态：
-        #   汉字(CJK) —— 有效邻居：既是「是否有邻居」的判定依据，也计入熵分布。
-        #   PUNCT —— 所有非 CJK 字符抽象成的同一个「特殊汉字」邻居（：/，/数字/字母…逐字符计数，
-        #            累计进同一类型），参与熵分布计算；但【不作为「是否有邻居」的判定依据】；
-        #            输出时 PUNCT 不是合法结果 → 切掉（显示引擎不输出特殊字符）。
+        # ---- 复合熵（2.1.12 实验分支：PUNCT 视为「空」）----
+        # 邻居三态（本分支 PUNCT 与 SEP 一致视为「空」）：
+        #   汉字(CJK) —— 有效邻居：是「是否有邻居」的判定依据，也是唯一计入熵分布的数据。
+        #   PUNCT —— 仅作生长/匹配哨兵（"吞噬星空："可匹配到），输出时切掉；
+        #            【本分支实验】熵计算里视同「空」，不进熵分布、不计入不空次数。
         #   空(SEP/开头/结尾) —— 空集、无，不计入。
         # 判定流程：
         #   1) 两侧都无汉字邻居 → -1.0 豁免（纯独立标题，如长生修仙）。
-        #   2) 仅一侧有汉字邻居 → 忽略无汉字侧，只用该侧邻居分布（含该侧PUNCT）算熵；
-        #      但若该侧不空数据 < ENT_MIN_DATA（太少，不足为据）→ 豁免保留
-        #      （如斗破苍穹 右仅"之"×1、无限恐怖 右仅"之"×2 —— 不能回答"归属于谁"就不滤）。
+        #   2) 仅一侧有汉字邻居 → 忽略无汉字侧，只用该侧邻居分布算熵；
+        #      但若该侧不空数据 < ENT_MIN_DATA → 豁免保留（斗破苍穹等）。
         #   3) 两侧都有汉字邻居：
-        #      a) 少侧不空次数 / 多侧不空次数 < 10%（不空=汉字次数+PUNCT次数）→
-        #         两侧邻居分布合并算总熵（救回一侧几乎全空的独立词，如苟在）；
-        #      b) 否则 → min(左熵, 右熵) 作判据（低熵在左/在右等价，两侧只要有一边低→依附）。
+        #      a) 少侧不空次数 / 多侧不空次数 < 合并比 → 两侧合并算总熵；
+        #      b) 否则 → min(左熵, 右熵) 作判据。
         l_cjk = list(l_groups.values())                        # 左汉字邻居权重
         r_cjk = [wsum for _, (_, wsum) in groups.items()]       # 右汉字邻居权重
         l_han = sum(l_cjk)
         r_han = sum(r_cjk)
-        l_full = l_cjk + ([l_punct] if l_punct > 0 else [])     # 左邻居分布（含PUNCT）
-        r_full = r_cjk + ([r_punct] if r_punct > 0 else [])     # 右邻居分布（含PUNCT）
-        l_non = l_han + l_punct      # 左不空次数（去掉开头/结尾空之后）
-        r_non = r_han + r_punct      # 右不空次数
+        l_full = l_cjk                       # 左邻居分布（PUNCT 视为空，不加入）
+        r_full = r_cjk                       # 右邻居分布
+        l_non = l_han                        # 左不空次数（仅汉字）
+        r_non = r_han                        # 右不空次数（仅汉字）
         if l_han == 0 and r_han == 0:
             compound_ent = -1.0          # 两侧都无汉字邻居 → 豁免
         elif l_han == 0:
