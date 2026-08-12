@@ -32,6 +32,7 @@ SEP = '\x00'      # 字段/run 边界（空：不参与熵、不生长）
 PUNCT = '\ue000'  # 标点哨兵：所有非 CJK 字符抽象成的同一个「特殊汉字」；参与熵计算，但不作为词生长原料、不进入候选词/词云（显示引擎不输出它）
 ENT_MERGE_RATIO = 0.25  # 复合熵「合并」触发比：两侧都有汉字邻居时，少侧不空/多侧不空 < 此值 → 合并两侧算总熵（0.20→0.25 调参优化：filt 率不变、误伤更少）
 ENT_MIN_DATA = 3        # 只用单侧算熵时，该侧不空次数 < 此值 → 数据不足，不足以为据 → 豁免保留
+INDEP_RATIO_THRESHOLD = 0.25  # 独立率保护阈值：被熵滤除的词，若 independent/count >= 此值则恢复（默认 0.25；0=关闭）。独立率高=经常自己站住脚，即便某侧熵低也救回
 CJK_RE = re.compile(r'[\u4e00-\u9fff]+')
 
 
@@ -76,7 +77,7 @@ def _wsum(pos_list, wgt):
     return sum(wgt[p] for p in pos_list)
 
 
-def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True):
+def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True, collect_dists=False):
     """核心：单字种子 → 跳跃式 BFS 枚举最大重复 → 独立出现次数判据。
 
     标点哨兵 PUNCT 在 S 中作为邻居参与熵计算，但对生长/独立判定当墙（与 SEP 同视），
@@ -243,7 +244,12 @@ def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True
             compound_ent = min(_entropy_from_vals(l_full), _entropy_from_vals(r_full))
 
         if len(w) >= 2 and independent >= 1:
-            candidates.append((w, count_w, independent, binding, compound_ent))
+            if collect_dists:
+                # (l_groups, l_punct, r_groups, r_punct)：左/右汉字邻居权重表 + 符号(PUNCT)次数
+                candidates.append((w, count_w, independent, binding, compound_ent,
+                                   (l_groups, l_punct, groups, r_punct)))
+            else:
+                candidates.append((w, count_w, independent, binding, compound_ent))
 
         # 继续生长：右邻字符分支（加权 count >= 2 才可能成为词）
         for c, (pl, wsum) in groups.items():
@@ -337,7 +343,7 @@ def detect_header(row, title_col, intro_col):
 
 
 # ---------------------------------------------------------------- 管线
-def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0, no_cloud=False, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True):
+def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0, no_cloud=False, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True, indep_ratio=0.0):
     S, wgt = build_corpus(docs)
     if not S:
         return
@@ -347,10 +353,20 @@ def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, s
     if bind_thresh < 1.0:
         candidates = [c for c in candidates if c[3] <= bind_thresh]
     # 复合熵闸门（与 --bind 取 AND）：c[4] 为 compound_entropy；-1.0 表示无真实邻居证据，豁免
+    filtered_by_ent = []
     if min_ent > 0:
         before = len(candidates)
+        filtered_by_ent = [c for c in candidates if not (c[4] < 0 or c[4] >= min_ent)]
         candidates = [c for c in candidates if c[4] < 0 or c[4] >= min_ent]
         print(f'[{prefix}] 熵过滤: {before} → {len(candidates)} 词 (阈值 {min_ent})', file=sys.stderr)
+    # 独立率保护（熵过滤的后置恢复层）：被熵滤除、但 independent/count >= 阈值的词救回。
+    # 只恢复"熵台阶"误杀的词，不影响 bind 闸门结果；-1.0 豁免词本就保留、不在恢复范围。
+    if indep_ratio > 0 and filtered_by_ent:
+        rescued = [c for c in filtered_by_ent if c[1] > 0 and (c[2] / c[1]) >= indep_ratio]
+        if rescued:
+            candidates = candidates + rescued
+            print(f'[{prefix}] 独立率保护: 恢复 {len(rescued)} 个高独立率词 '
+                  f'(独立率≥{indep_ratio}, 例: {", ".join(w for w, *_ in rescued[:8])}…)', file=sys.stderr)
     print(f'[{prefix}] 候选词: {len(candidates)}  去重字符: {len(charfreq)}', file=sys.stderr)
     write_word_csv(os.path.join(out_dir, f'{prefix}_wordfreq.csv'), candidates)
     write_char_csv(os.path.join(out_dir, f'{prefix}_charfreq.csv'), charfreq)
@@ -395,6 +411,8 @@ def main():
                     help='合并触发比：两侧都有汉字邻居时，少侧不空次数/多侧不空次数 低于此值（默认 0.25，不空=汉字邻居次数+PUNCT次数）→ 两侧邻居分布合并算总熵；否则用 min(左熵,右熵)')
     ap.add_argument('--no-cloud', action='store_true',
                     help='跳过词云/PNG/互动HTML渲染（仅生成 CSV），用于批量调参加速')
+    ap.add_argument('--indep-ratio', type=float, default=0.0,
+                    help='独立率保护阈值（0=关闭，默认 0.25）：被熵滤除的词若 independent/count >= 阈值则恢复（高频独立成段词免受低熵误杀）；仅作熵过滤的后置恢复层')
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -429,8 +447,8 @@ def main():
     title_raw = [t for t, i, w in dedup if t]
     intro_raw = [i for t, i, w in dedup if i]
 
-    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt)
-    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt)
+    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, indep_ratio=args.indep_ratio)
+    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, indep_ratio=args.indep_ratio)
     print(f'完成，输出目录: {args.out}')
 
 
