@@ -28,25 +28,29 @@ from collections import Counter
 from interactive_cloud import CLOUD_W, CLOUD_H, emit_interactive
 
 
-SEP = '\x00'      # 字段/run 边界（不参与熵、不生长）
-PUNCT = '\ue000'  # 标点哨兵：单字符；参与熵计算，但不作为词生长原料、不进入候选词/词云
-ENT_MERGE_RATIO = 0.10  # 复合熵「第二模式」触发比：少侧/多侧有效权重比 < 此值 → 合并两侧算总熵
+SEP = '\x00'      # 字段/run 边界（空：不参与熵、不生长）
+PUNCT = '\ue000'  # 标点哨兵：所有非 CJK 字符抽象成的同一个「特殊汉字」；参与熵计算，但不作为词生长原料、不进入候选词/词云（显示引擎不输出它）
+ENT_MERGE_RATIO = 0.20  # 复合熵「合并」触发比：两侧都有汉字邻居时，少侧不空/多侧不空 < 此值 → 合并两侧算总熵
+ENT_MIN_DATA = 3        # 只用单侧算熵时，该侧不空次数 < 此值 → 数据不足，不足以为据 → 豁免保留
 CJK_RE = re.compile(r'[\u4e00-\u9fff]+')
 
 
 # ---------------------------------------------------------------- 清洗层
 def clean(text, use_punct=True):
-    """连续 CJK 保留为 run；run 之间的非 CJK（标点/空白）折叠为单个哨兵。
+    """CJK 汉字逐字保留；非 CJK 字符（标点/空白/数字/字母）抽象为同一个「特殊汉字」PUNCT。
 
-    use_punct=True （默认，2.1.5 行为）：run 间用标点哨兵 PUNCT 连接，
-        PUNCT 作为熵计算的“邻居信号”参与统计，但不作为词生长原料、不进入候选词/词云。
-    use_punct=False（关闭标点感知熵，等价 2.1.4 行为）：run 间用边界 SEP 连接，
-        非 CJK 整体丢弃，便于与标点感知版对照调参。
-    字段间连接由 build_corpus 用 SEP 完成。"""
-    runs = CJK_RE.findall(text or '')
-    if not runs:
+    use_punct=True （默认）：每个非 CJK 字符 → 一个 PUNCT 哨兵（逐字符保留；
+        "LPL史记" → "PUNCT PUNCT PUNCT 史记"，统计邻居时只取紧邻那一个，抽象层次等价）。
+        PUNCT 参与熵计算（：×2+，×1+6×4 → PUNCT×7），但不作为词生长原料、不进入候选词/词云。
+    use_punct=False（--no-punct-ent）：非 CJK 整体丢弃，run 间用 SEP 连接（等价 2.1.4 行为）。
+    字段间连接由 build_corpus 用 SEP 完成（SEP=空，不参与熵）。"""
+    t = text or ''
+    if not t:
         return ''
-    return (PUNCT if use_punct else SEP).join(runs)
+    if use_punct:
+        return re.sub(r'[^\u4e00-\u9fff]', PUNCT, t)
+    runs = CJK_RE.findall(t)
+    return SEP.join(runs)
 
 
 def build_corpus(docs):
@@ -202,31 +206,41 @@ def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True
         right_conc = (max(w_ for _, w_ in groups.values()) / total_r) if total_r > 0 else 0.0
         binding = max(left_conc, right_conc)
 
-        # ---- 复合熵（2.1.8 修正）----
-        # SEP 与 PUNCT 哨兵都视为「无效数据」，一律不计入熵。
-        #   · 仅取纯 CJK 邻居的权重（l_groups / groups 本就只含 CJK）；
-        #   · 某一侧若全是无效数据（无纯 CJK 邻居）→ 直接忽略该侧，只看另一侧的有效熵；
-        #   · 两侧皆无纯 CJK 邻居（仅 SEP/PUNCT）→ -1.0 豁免。
-        # 旧版把 PUNCT 当「真实邻居」塞进熵值，使「左侧全边界」被当成「单侧退化邻居(熵=0)」，
-        # 经 min() 压死（典型误杀：万族 左全无效、右有{直,之,王} 本应保留却被判 0）。现已修正为
-        # 忽略全无效侧、只取另一侧有效熵。--no-punct-exempt 开关自此与默认等价（PUNCT 始终不计入）。
-        l_cjk = list(l_groups.values())                       # 纯 CJK 左邻权重
-        r_cjk = [wsum for _, (_, wsum) in groups.items()]      # 纯 CJK 右邻权重
-        l_w = sum(l_cjk)
-        r_w = sum(r_cjk)
-        if l_w == 0 and r_w == 0:
-            compound_ent = -1.0          # 两侧皆无真实 CJK 邻居（仅 SEP/PUNCT）→ 豁免
-        elif l_w > 0 and r_w > 0:
-            # 两侧均有效：少侧/多侧有效权重比 < 阈值 时合并算总熵，
-            # 避免「一侧稀疏主导 min」把真短语压成 0 熵（第二模式，2.1.6）。
-            if ent_merge_ratio > 0 and min(l_w, r_w) / max(l_w, r_w) < ent_merge_ratio:
-                compound_ent = _entropy_from_vals(l_cjk + r_cjk)
-            else:
-                compound_ent = min(_entropy_from_vals(l_cjk), _entropy_from_vals(r_cjk))
-        elif l_w > 0:
-            compound_ent = _entropy_from_vals(l_cjk)   # 仅左有效 → 忽略右
+        # ---- 复合熵（2.1.10 按用户最终规则）----
+        # 邻居三态：
+        #   汉字(CJK) —— 有效邻居：既是「是否有邻居」的判定依据，也计入熵分布。
+        #   PUNCT —— 所有非 CJK 字符抽象成的同一个「特殊汉字」邻居（：/，/数字/字母…逐字符计数，
+        #            累计进同一类型），参与熵分布计算；但【不作为「是否有邻居」的判定依据】；
+        #            输出时 PUNCT 不是合法结果 → 切掉（显示引擎不输出特殊字符）。
+        #   空(SEP/开头/结尾) —— 空集、无，不计入。
+        # 判定流程：
+        #   1) 两侧都无汉字邻居 → -1.0 豁免（纯独立标题，如长生修仙）。
+        #   2) 仅一侧有汉字邻居 → 忽略无汉字侧，只用该侧邻居分布（含该侧PUNCT）算熵；
+        #      但若该侧不空数据 < ENT_MIN_DATA（太少，不足为据）→ 豁免保留
+        #      （如斗破苍穹 右仅"之"×1、无限恐怖 右仅"之"×2 —— 不能回答"归属于谁"就不滤）。
+        #   3) 两侧都有汉字邻居：
+        #      a) 少侧不空次数 / 多侧不空次数 < 10%（不空=汉字次数+PUNCT次数）→
+        #         两侧邻居分布合并算总熵（救回一侧几乎全空的独立词，如苟在）；
+        #      b) 否则 → min(左熵, 右熵) 作判据（低熵在左/在右等价，两侧只要有一边低→依附）。
+        l_cjk = list(l_groups.values())                        # 左汉字邻居权重
+        r_cjk = [wsum for _, (_, wsum) in groups.items()]       # 右汉字邻居权重
+        l_han = sum(l_cjk)
+        r_han = sum(r_cjk)
+        l_full = l_cjk + ([l_punct] if l_punct > 0 else [])     # 左邻居分布（含PUNCT）
+        r_full = r_cjk + ([r_punct] if r_punct > 0 else [])     # 右邻居分布（含PUNCT）
+        l_non = l_han + l_punct      # 左不空次数（去掉开头/结尾空之后）
+        r_non = r_han + r_punct      # 右不空次数
+        if l_han == 0 and r_han == 0:
+            compound_ent = -1.0          # 两侧都无汉字邻居 → 豁免
+        elif l_han == 0:
+            # 忽略左侧，只用右侧；但右侧不空数据 < ENT_MIN_DATA（太少，不足为据）→ 豁免
+            compound_ent = -1.0 if r_non < ENT_MIN_DATA else _entropy_from_vals(r_full)
+        elif r_han == 0:
+            compound_ent = -1.0 if l_non < ENT_MIN_DATA else _entropy_from_vals(l_full)
+        elif ent_merge_ratio > 0 and min(l_non, r_non) / max(l_non, r_non) < ent_merge_ratio:
+            compound_ent = _entropy_from_vals(l_full + r_full)   # 一侧不空太少 → 合并
         else:
-            compound_ent = _entropy_from_vals(r_cjk)   # 仅右有效 → 忽略左
+            compound_ent = min(_entropy_from_vals(l_full), _entropy_from_vals(r_full))
 
         if len(w) >= 2 and independent >= 1:
             candidates.append((w, count_w, independent, binding, compound_ent))
@@ -370,15 +384,15 @@ def main():
     ap.add_argument('--bind', type=float, default=1.0,
                     help='前后集中度闸门阈值（binding）：binding 大于该值的词视为寄生词剔除；默认 1.0=不过滤（基线）')
     ap.add_argument('--min-ent', type=float, default=0.0,
-                    help='复合熵阈值（compound_entropy）：仅保留 >= 阈值的词；-1.0(无邻居证据)豁免；默认 0.0=不过滤（基线），推荐 0.5~1.0')
+                    help='复合熵阈值：compound_entropy >= 阈值才保留（-1.0 豁免恒保留）。判据=min(左熵,右熵)，两侧只要有一边低于阈值即滤除；默认 0.0=不过滤（基线），推荐 0.5（用户定）')
     ap.add_argument('--no-punct-ent', action='store_true',
                     help='关闭标点感知熵：非CJK不保留为哨兵（等价于 2.1.4 行为），便于与标点感知版对照调参')
     ap.add_argument('--no-merge', action='store_true',
-                    help='关闭复合熵第二模式（合并熵）：恒用 min(左熵,右熵)；默认开启，按 --ent-merge-ratio 触发合并两侧算总熵')
+                    help='关闭合并模式（等价 ratio=0）：两侧都有汉字邻居时恒用 min(左熵,右熵) 判据，不做“少侧不空/多侧不空<10%→合并”')
     ap.add_argument('--no-punct-exempt', action='store_true',
-                    help='(2.1.8 起已废弃/等价默认) PUNCT 与 SEP 一致视为无效数据、始终不计入熵，故该开关不再改变结果，仅保留以兼容旧命令')
+                    help='(2.1.10 起废弃/无实际作用) PUNCT 恒作为抽象「特定汉字」邻居参与熵分布，但不作为「是否有邻居」的判定依据——该行为不可关闭，仅保留此开关兼容旧命令')
     ap.add_argument('--ent-merge-ratio', type=float, default=ENT_MERGE_RATIO,
-                    help='第二模式触发比：少侧/多侧有效权重比低于此值才合并（默认 0.10）')
+                    help='合并触发比：两侧都有汉字邻居时，少侧不空次数/多侧不空次数 低于此值（默认 0.20，不空=汉字邻居次数+PUNCT次数）→ 两侧邻居分布合并算总熵；否则用 min(左熵,右熵)')
     ap.add_argument('--no-cloud', action='store_true',
                     help='跳过词云/PNG/互动HTML渲染（仅生成 CSV），用于批量调参加速')
     args = ap.parse_args()
