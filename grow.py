@@ -72,7 +72,7 @@ def _wsum(pos_list, wgt):
     return sum(wgt[p] for p in pos_list)
 
 
-def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO):
+def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True):
     """核心：单字种子 → 跳跃式 BFS 枚举最大重复 → 独立出现次数判据。
 
     标点哨兵 PUNCT 在 S 中作为邻居参与熵计算，但对生长/独立判定当墙（与 SEP 同视），
@@ -216,8 +216,17 @@ def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO):
         r_has = len(r_vals) > 0
         l_w = sum(l_vals)
         r_w = sum(r_vals)
-        if not l_has and not r_has:
-            compound_ent = -1.0          # 两侧皆无真实邻居 → 豁免
+        # 真实 CJK 邻居（不含 PUNCT/边界）：用于豁免判定。
+        # PUNCT 仅作为熵的「统计信号」参与计算，本身不算「真实上下文」——
+        # 否则纯独立标题（长生修仙等，左右只有边界/PUNCT）会被踢出豁免、进统计层后熵=0 被滤。
+        l_real_has = len(l_groups) > 0
+        r_real_has = len(groups) > 0
+        if ent_punct_exempt:
+            exempt_no_real = (not l_real_has and not r_real_has)
+        else:
+            exempt_no_real = (not l_has and not r_has)
+        if exempt_no_real:
+            compound_ent = -1.0          # 两侧皆无真实 CJK 邻居（仅 PUNCT/边界）→ 豁免
         elif ent_merge_ratio > 0 and max(l_w, r_w) > 0 \
                 and min(l_w, r_w) / max(l_w, r_w) < ent_merge_ratio:
             # 第二模式（10% 阈值）：一侧有效权重明显少于另一侧 → 把稀少侧合并进多侧，
@@ -325,12 +334,12 @@ def detect_header(row, title_col, intro_col):
 
 
 # ---------------------------------------------------------------- 管线
-def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0, no_cloud=False, ent_merge_ratio=ENT_MERGE_RATIO):
+def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0, no_cloud=False, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True):
     S, wgt = build_corpus(docs)
     if not S:
         return
     print(f'[{prefix}] 语料字符数(去重后): {len(S)}  run数: {S.count(SEP)+1 if S else 0}', file=sys.stderr)
-    candidates, charfreq = scan_and_grow(S, wgt, ent_merge_ratio)
+    candidates, charfreq = scan_and_grow(S, wgt, ent_merge_ratio, ent_punct_exempt)
     # 前后集中度闸门（bind）：binding > 阈值的词视为寄生词剔除；默认 1.0 = 不过滤（基线）
     if bind_thresh < 1.0:
         candidates = [c for c in candidates if c[3] <= bind_thresh]
@@ -377,6 +386,8 @@ def main():
                     help='关闭标点感知熵：非CJK不保留为哨兵（等价于 2.1.4 行为），便于与标点感知版对照调参')
     ap.add_argument('--no-merge', action='store_true',
                     help='关闭复合熵第二模式（合并熵）：恒用 min(左熵,右熵)；默认开启，按 --ent-merge-ratio 触发合并两侧算总熵')
+    ap.add_argument('--no-punct-exempt', action='store_true',
+                    help='关闭标点豁免：PUNCT 重新算作「真实邻居」触发豁免判定（旧行为），便于对照。默认开启——PUNCT 仅作熵统计信号，不改变纯独立标题的豁免状态')
     ap.add_argument('--ent-merge-ratio', type=float, default=ENT_MERGE_RATIO,
                     help='第二模式触发比：少侧/多侧有效权重比低于此值才合并（默认 0.10）')
     ap.add_argument('--no-cloud', action='store_true',
@@ -415,8 +426,8 @@ def main():
     title_raw = [t for t, i, w in dedup if t]
     intro_raw = [i for t, i, w in dedup if i]
 
-    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio)
-    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio)
+    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt)
+    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt)
     print(f'完成，输出目录: {args.out}')
 
 
