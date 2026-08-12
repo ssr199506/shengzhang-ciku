@@ -156,8 +156,16 @@ def scan_and_grow(S, wgt):
                 continue  # 右被覆盖
             independent += wgt[p]
 
+        # 前后集中度（binding）：左右首字符分布中最大单字占比，排除边界哨兵。
+        # 高集中度 ⇒ 该词几乎只寄生在某固定邻接字之后/之前 ⇒ 大概率非独立词。
+        total_l = sum(l_groups.values())
+        left_conc = (max(l_groups.values()) / total_l) if total_l > 0 else 0.0
+        total_r = sum(w_ for _, w_ in groups.values())
+        right_conc = (max(w_ for _, w_ in groups.values()) / total_r) if total_r > 0 else 0.0
+        binding = max(left_conc, right_conc)
+
         if len(w) >= 2 and independent >= 1:
-            candidates.append((w, count_w, independent))
+            candidates.append((w, count_w, independent, binding))
 
         # 继续生长：右邻字符分支（加权 count >= 2 才可能成为词）
         for c, (pl, wsum) in groups.items():
@@ -174,9 +182,9 @@ def scan_and_grow(S, wgt):
 def write_word_csv(path, candidates):
     with open(path, 'w', newline='', encoding='utf-8-sig') as f:
         wr = csv.writer(f)
-        wr.writerow(['word', 'count', 'independent', 'len'])
-        for w, cnt, ind in sorted(candidates, key=lambda x: (-x[1], x[0])):
-            wr.writerow([w, cnt, ind, len(w)])
+        wr.writerow(['word', 'count', 'independent', 'bind', 'len'])
+        for w, cnt, ind, bind in sorted(candidates, key=lambda x: (-x[1], x[0])):
+            wr.writerow([w, cnt, ind, round(bind, 4), len(w)])
 
 
 def write_char_csv(path, charfreq):
@@ -251,12 +259,15 @@ def detect_header(row, title_col, intro_col):
 
 
 # ---------------------------------------------------------------- 管线
-def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False):
+def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0):
     S, wgt = build_corpus(docs)
     if not S:
         return
     print(f'[{prefix}] 语料字符数(去重后): {len(S)}  run数: {S.count(SEP)+1 if S else 0}', file=sys.stderr)
     candidates, charfreq = scan_and_grow(S, wgt)
+    # 前后集中度闸门（bind）：binding > 阈值的词视为寄生词剔除；默认 1.0 = 不过滤（基线）
+    if bind_thresh < 1.0:
+        candidates = [c for c in candidates if c[3] <= bind_thresh]
     print(f'[{prefix}] 候选词: {len(candidates)}  去重字符: {len(charfreq)}', file=sys.stderr)
     write_word_csv(os.path.join(out_dir, f'{prefix}_wordfreq.csv'), candidates)
     write_char_csv(os.path.join(out_dir, f'{prefix}_charfreq.csv'), charfreq)
@@ -285,6 +296,8 @@ def main():
     ap.add_argument('--intro-col', type=int, default=1, help='简介列号（0-based，-1 表示无简介）')
     ap.add_argument('--standalone', action='store_true',
                     help='互动词云生成单文件内联 HTML（默认生成外壳 HTML + 外部 data.js，体积恒定可复用）')
+    ap.add_argument('--bind', type=float, default=1.0,
+                    help='前后集中度闸门阈值（binding）：binding 大于该值的词视为寄生词剔除；默认 1.0=不过滤（基线）')
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -317,8 +330,8 @@ def main():
     title_raw = [t for t, i, w in dedup if t]
     intro_raw = [i for t, i, w in dedup if i]
 
-    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone)
-    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone)
+    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind)
+    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind)
     print(f'完成，输出目录: {args.out}')
 
 

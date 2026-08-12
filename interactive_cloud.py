@@ -25,7 +25,7 @@ def select_cloud_words(candidates, top_n=200, maxlen=0):
     """挑出词云要画的词：按 count 降序、过滤超长、截断 top_n。
     返回 [(word, count)] 有序列表。"""
     freqs = {}
-    for w, cnt, ind in candidates:
+    for w, cnt, ind, bind in candidates:
         if maxlen and len(w) > maxlen:
             continue
         freqs[w] = cnt
