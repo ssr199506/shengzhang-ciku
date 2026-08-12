@@ -28,14 +28,20 @@ from collections import Counter
 from interactive_cloud import CLOUD_W, CLOUD_H, emit_interactive
 
 
-SEP = '\x00'  # 清洗后文本中保证不出现的边界字符
+SEP = '\x00'      # 字段/run 边界（不参与熵、不生长）
+PUNCT = '\ue000'  # 标点哨兵：单字符；参与熵计算，但不作为词生长原料、不进入候选词/词云
 CJK_RE = re.compile(r'[\u4e00-\u9fff]+')
 
 
 # ---------------------------------------------------------------- 清洗层
 def clean(text):
-    """只保留连续 CJK（U+4E00–U+9FFF），非 CJK 字符即 run 边界。"""
-    return SEP.join(CJK_RE.findall(text or ''))
+    """连续 CJK 保留为 run；run 之间的非 CJK（标点/空白）折叠为单个标点哨兵 PUNCT。
+    PUNCT 作为熵计算的“邻居信号”参与统计，但不作为词生长原料、不进入候选词/词云。
+    字段间连接由 build_corpus 用 SEP 完成。"""
+    runs = CJK_RE.findall(text or '')
+    if not runs:
+        return ''
+    return PUNCT.join(runs)
 
 
 def build_corpus(docs):
@@ -64,9 +70,13 @@ def _wsum(pos_list, wgt):
 def scan_and_grow(S, wgt):
     """核心：单字种子 → 跳跃式 BFS 枚举最大重复 → 独立出现次数判据。
 
+    标点哨兵 PUNCT 在 S 中作为邻居参与熵计算，但对生长/独立判定当墙（与 SEP 同视），
+    且不进入候选词、字频表、词云。
+
     返回 (candidates, charfreq)
-        candidates: [(word, count, independent)]，len(word)>=2 且 independent>=1
-        charfreq:   {char: 加权出现次数}
+        candidates: [(word, count, independent, binding, compound_ent)]，
+                    len(word)>=2 且 independent>=1
+        charfreq:   {char: 加权出现次数}（不含 PUNCT/SEP）
     """
     n = len(S)
 
@@ -74,21 +84,27 @@ def scan_and_grow(S, wgt):
     pos_single = {}
     charfreq = {}
     for p, ch in enumerate(S):
-        if ch == SEP:
+        if ch == SEP or ch == PUNCT:
             continue
         pos_single.setdefault(ch, []).append(p)
         charfreq[ch] = charfreq.get(ch, 0) + wgt[p]
 
     def right_dist(w, pos_list):
-        """右邻分布：返回 (groups, boundary)。
-        groups: {右邻字符: ([位置], 加权和)}；boundary: 右邻为边界(SEP/串尾)的加权和。"""
+        """右邻分布：返回 (groups, boundary, punct)。
+        groups: {右邻字符: ([位置], 加权和)}，仅真实 CJK 邻居；
+        boundary: 右邻为边界(SEP/串尾/标点哨兵)的加权和（生长当墙，不扩展、不计入独立/熵）；
+        punct: 右邻为标点哨兵 PUNCT 的加权和（作为熵的“邻居信号”，但不生长）。"""
         groups = {}
         boundary = 0
+        punct = 0
         lw = len(w)
         for p in pos_list:
             rp = p + lw
             if rp >= n or S[rp] == SEP:
                 boundary += wgt[p]
+            elif S[rp] == PUNCT:
+                boundary += wgt[p]   # 生长当墙
+                punct += wgt[p]      # 熵当邻居
             else:
                 c = S[rp]
                 g = groups.get(c)
@@ -97,19 +113,23 @@ def scan_and_grow(S, wgt):
                 else:
                     g[0].append(p)
                     g[1] += wgt[p]
-        return groups, boundary
+        return groups, boundary, punct
 
-    # 左最大 / 独立次数判定用：左邻分布
+    # 左最大 / 独立次数判定用：左邻分布（语义同 right_dist）
     def left_dist(pos_list):
         groups = {}
         boundary = 0
+        punct = 0
         for p in pos_list:
             if p == 0 or S[p - 1] == SEP:
                 boundary += wgt[p]
+            elif S[p - 1] == PUNCT:
+                boundary += wgt[p]   # 生长当墙
+                punct += wgt[p]      # 熵当邻居
             else:
                 c = S[p - 1]
                 groups[c] = groups.get(c, 0) + wgt[p]
-        return groups, boundary
+        return groups, boundary, punct
 
     # BFS 队列：入队 (word, pos_list)，word 的加权 count >= 2
     from collections import deque
@@ -139,7 +159,7 @@ def scan_and_grow(S, wgt):
         w, lst = queue.popleft()
         # 跳跃：直到右最大（右邻含边界，或右邻字符种数 >=2）
         while True:
-            groups, boundary = right_dist(w, lst)
+            groups, boundary, r_punct = right_dist(w, lst)
             if boundary > 0 or len(groups) >= 2:
                 break  # 右最大
             # 唯一右邻字符 c 且无边界 → 同频右扩，直接跳
@@ -150,7 +170,7 @@ def scan_and_grow(S, wgt):
         count_w = _wsum(lst, wgt)
 
         # 左最大检查：左邻含边界，或左邻字符种数 >=2
-        l_groups, l_boundary = left_dist(lst)
+        l_groups, l_boundary, l_punct = left_dist(lst)
         if l_boundary == 0 and len(l_groups) < 2:
             # 所有出现左邻都是同一字符 → 非左最大 → 整棵右扩展子树都非左最大，剪枝
             continue
@@ -177,9 +197,16 @@ def scan_and_grow(S, wgt):
         right_conc = (max(w_ for _, w_ in groups.values()) / total_r) if total_r > 0 else 0.0
         binding = max(left_conc, right_conc)
 
-        # ---- 复合熵（边界不参与；两侧皆无真实邻居 → -1.0 表示熵不适用） ----
-        l_vals = list(l_groups.values())
+        # ---- 复合熵（边界 SEP/串首尾 不参与；标点哨兵 PUNCT 作为真实邻居参与；
+        #      两侧皆无真实邻居 → -1.0 表示熵不适用） ----
+        # 右邻分布：真实 CJK 邻居 + 标点哨兵
         r_vals = [wsum for _, (_, wsum) in groups.items()]
+        if r_punct > 0:
+            r_vals.append(r_punct)
+        # 左邻分布：真实 CJK 邻居 + 标点哨兵
+        l_vals = list(l_groups.values())
+        if l_punct > 0:
+            l_vals.append(l_punct)
         l_has = len(l_vals) > 0
         r_has = len(r_vals) > 0
         if l_has and r_has:
