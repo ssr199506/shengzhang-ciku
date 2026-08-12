@@ -32,16 +32,15 @@ def select_cloud_words(candidates, top_n=200, maxlen=0):
     return sorted(freqs.items(), key=lambda x: -x[1])[:top_n]
 
 
-def emit_interactive(prefix, out_dir, candidates, raw_texts, top_n, maxlen, layout):
-    """根据 layout_（wordcloud.WordCloud.layout_，None 时跳过）与候选词，
-    写出互动词云的 json + html。
+def emit_interactive(prefix, out_dir, candidates, raw_texts, top_n, maxlen, layout,
+                     standalone=False, max_examples=50):
+    """写出互动词云。
 
-    candidates : grow.py 产出的候选词 [(word, count, independent)]
-    raw_texts  : 该管线对应的原始字段文本列表（标题或简介），用于匹配检索
-    top_n/maxlen : 与 render_cloud 一致，决定词云里画哪些词
-    layout     : WordCloud.layout_，5 元组列表
-                 ((word, 归一化频率), font_size, (y, x), orientation, color)
-                 orientation: None=横排, Image.ROTATE_90=竖排
+    standalone=True  : 单文件内联 HTML（数据嵌进 HTML，双击即开，便于携带）。
+    standalone=False : 外壳 HTML + 外部 data.js（HTML 恒定体积、可复用，数据任意大）。
+
+    两版共用数据均裁剪：matches 只留「总数 + 最多 max_examples 条例子索引」，
+    fields 只保留被例子引用的文本并重映射索引 → 大数据下体积恒定可控，渲染只触 top-N。
     """
     if layout is None:
         return
@@ -55,33 +54,45 @@ def emit_interactive(prefix, out_dir, candidates, raw_texts, top_n, maxlen, layo
             'size': int(fs), 'color': col, 'rotate': bool(orient is not None),
         })
         placed.add(w)
-    # 仅对真正落位的词计算匹配（没放进画布的词不参与）
-    matches = {}
+    # 计算匹配：总数 + 截断例子 + 收集被引用文本
+    used = set()
+    raw_matches = {}
     for w, _ in cloud_words:
         if w not in placed:
             continue
         idxs = [i for i, t in enumerate(raw_texts) if w in t]
-        if idxs:
-            matches[w] = idxs
-    data = {'size': [CLOUD_W, CLOUD_H], 'fields': raw_texts,
+        if not idxs:
+            continue
+        raw_matches[w] = idxs
+        used.update(idxs[:max_examples])
+    # 只保留被引用文本并重映射索引（其余原始文本不进产物）
+    ordered = sorted(used)
+    remap = {old: new for new, old in enumerate(ordered)}
+    fields = [raw_texts[i] for i in ordered]
+    matches = {w: {'count': len(raw_matches[w]),
+                   'examples': [remap[i] for i in raw_matches[w][:max_examples]]}
+               for w in raw_matches}
+    data = {'size': [CLOUD_W, CLOUD_H], 'fields': fields,
             'words': words_info, 'matches': matches}
+    # 始终写出 json（供程序消费，与 HTML 同源裁剪）
     with open(os.path.join(out_dir, f'{prefix}_wordcloud.json'), 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False)
+    if standalone:
+        html = build_cloud_html(data)
+    else:
+        with open(os.path.join(out_dir, f'{prefix}_wordcloud.data.js'), 'w', encoding='utf-8') as f:
+            f.write('window.GROW_DATA = ' + json.dumps(data, ensure_ascii=False) + ';')
+        html = build_shell_html(prefix)
     with open(os.path.join(out_dir, f'{prefix}_wordcloud.html'), 'w', encoding='utf-8') as f:
-        f.write(build_cloud_html(data))
-    print(f'[{prefix}] 互动词云: {len(words_info)} 词, '
-          f'{sum(len(v) for v in matches.values())} 条匹配', file=sys.stderr)
+        f.write(html)
+    total = sum(m['count'] for m in matches.values())
+    print(f'[{prefix}] 互动词云: {len(words_info)} 词, {total} 条匹配'
+          f'(每词展示截断至 {max_examples})', file=sys.stderr)
 
 
 # ---------------------------------------------------------------- 网页渲染
-def build_cloud_html(data):
-    """生成自包含互动词云 HTML：词按 layout 绝对定位（与 PNG 同坐标），
-    单击选中变色、双击弹出可拖动面板列出匹配文本并高亮词。"""
-    payload = json.dumps(data, ensure_ascii=False)
-    return _CLOUD_HTML_TEMPLATE.replace('__DATA_JSON__', payload)
-
-
-_CLOUD_HTML_TEMPLATE = r'''<!doctype html>
+# 头部（结构 + 样式）：内联版与外壳版共用
+_CLOUD_HEAD = r'''<!doctype html>
 <html lang="zh">
 <head>
 <meta charset="utf-8">
@@ -127,8 +138,11 @@ _CLOUD_HTML_TEMPLATE = r'''<!doctype html>
   <div id="phead"><span id="ptitle"></span><span id="pcnt"></span><span id="pclose">&times;</span></div>
   <div id="pbody"></div>
 </div>
-<script>
-const DATA = __DATA_JSON__;
+'''
+
+# 引擎脚本（渲染 + 交互）：内联版与外壳版共用；数据来源由 __DATA_INIT__ 注入
+_CLOUD_ENGINE = r'''<script>
+const DATA = __DATA_INIT__;
 const canvas = document.getElementById('canvas');
 const stage = document.getElementById('stage');
 const panel = document.getElementById('panel');
@@ -164,15 +178,17 @@ function select(el){
   selEl = el; el.classList.add('sel');
 }
 function openPanel(word){
-  const idxs = DATA.matches[word] || [];
+  const m = DATA.matches[word] || {count: 0, examples: []};
   document.getElementById('ptitle').textContent = word;
-  document.getElementById('pcnt').textContent = '匹配 ' + idxs.length + ' 条';
+  const shown = m.examples.length;
+  document.getElementById('pcnt').textContent = '匹配 ' + m.count + ' 条'
+      + (shown < m.count ? '（展示前 ' + shown + '）' : '');
   const body = document.getElementById('pbody');
   body.innerHTML = '';
-  if (!idxs.length){ body.innerHTML = '<div class="empty">（无匹配文本）</div>'; }
+  if (!m.count){ body.innerHTML = '<div class="empty">（无匹配文本）</div>'; }
   else {
     const frag = document.createDocumentFragment();
-    idxs.forEach(i => {
+    m.examples.forEach(i => {
       const d = document.createElement('div');
       d.className = 'row';
       d.innerHTML = highlight(DATA.fields[i], word);
@@ -215,3 +231,15 @@ stage.addEventListener('click', () => {
 </body>
 </html>
 '''
+
+
+def build_cloud_html(data):
+    """内联单文件版：数据直接嵌入 HTML（双击即开、便于携带）。"""
+    payload = json.dumps(data, ensure_ascii=False)
+    return _CLOUD_HEAD + _CLOUD_ENGINE.replace('__DATA_INIT__', payload)
+
+
+def build_shell_html(prefix):
+    """外壳版：数据来自外部 data.js，HTML 自身恒定体积、可复用。"""
+    src = f'<script src="{prefix}_wordcloud.data.js"></script>'
+    return _CLOUD_HEAD + src + _CLOUD_ENGINE.replace('__DATA_INIT__', 'window.GROW_DATA || {}')

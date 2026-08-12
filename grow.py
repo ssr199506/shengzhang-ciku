@@ -251,7 +251,7 @@ def detect_header(row, title_col, intro_col):
 
 
 # ---------------------------------------------------------------- 管线
-def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path):
+def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False):
     S, wgt = build_corpus(docs)
     if not S:
         return
@@ -268,7 +268,7 @@ def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path):
         layout = None
     # 互动词云（插入模块，独立生成 json + html；失败不影响上面的核心产物）
     try:
-        emit_interactive(prefix, out_dir, candidates, raw_texts, top_n, maxlen, layout)
+        emit_interactive(prefix, out_dir, candidates, raw_texts, top_n, maxlen, layout, standalone=standalone)
     except Exception as e:
         print(f'[{prefix}] 互动词云生成跳过: {e}', file=sys.stderr)
 
@@ -283,6 +283,8 @@ def main():
     ap.add_argument('--no-dedup', action='store_true', help='不去重（默认按相同 title,intro 合并加权）')
     ap.add_argument('--title-col', type=int, default=0, help='书名列号（0-based）')
     ap.add_argument('--intro-col', type=int, default=1, help='简介列号（0-based，-1 表示无简介）')
+    ap.add_argument('--standalone', action='store_true',
+                    help='互动词云生成单文件内联 HTML（默认生成外壳 HTML + 外部 data.js，体积恒定可复用）')
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -315,8 +317,8 @@ def main():
     title_raw = [t for t, i, w in dedup if t]
     intro_raw = [i for t, i, w in dedup if i]
 
-    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None)
-    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None)
+    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone)
+    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone)
     print(f'完成，输出目录: {args.out}')
 
 
