@@ -30,8 +30,11 @@ from interactive_cloud import CLOUD_W, CLOUD_H, emit_interactive
 
 SEP = '\x00'      # 字段/run 边界（空：不参与熵、不生长）
 PUNCT = '\ue000'  # 标点哨兵：所有非 CJK 字符抽象成的同一个「特殊汉字」；参与熵计算，但不作为词生长原料、不进入候选词/词云（显示引擎不输出它）
-ENT_MERGE_RATIO = 0.25  # 复合熵「合并」触发比：两侧都有汉字邻居时，少侧不空/多侧不空 < 此值 → 合并两侧算总熵（0.20→0.25 调参优化：filt 率不变、误伤更少）
-ENT_MIN_DATA = 3        # 只用单侧算熵时，该侧不空次数 < 此值 → 数据不足，不足以为据 → 豁免保留
+ENT_MERGE_RATIO = 0.25  # (2.1.13 矩阵方案废弃该触发) 保留兼容
+ENT_MIN_DATA = 3        # (2.1.13 被 ENT_TOTAL_MIN 替代) 保留兼容
+ENT_TOTAL_MIN = 8       # 矩阵方案：总有效证据量 H_L+H_R < 此值 → 证据不足 → 豁免保留
+ENT_INDEP_MIN = 0.5     # 矩阵方案：独立率 independent/count < 此值 → 从不独立 → 模板词直接过滤
+ENT_IMBALANCE_MAX = 0.8 # 矩阵方案：左右失衡度 |H_L-H_R|/(H_L+H_R+1) > 此值 → 严重失衡 → 合并两侧算总熵
 CJK_RE = re.compile(r'[\u4e00-\u9fff]+')
 
 
@@ -206,41 +209,36 @@ def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True
         right_conc = (max(w_ for _, w_ in groups.values()) / total_r) if total_r > 0 else 0.0
         binding = max(left_conc, right_conc)
 
-        # ---- 复合熵（2.1.10 按用户最终规则）----
-        # 邻居三态：
-        #   汉字(CJK) —— 有效邻居：既是「是否有邻居」的判定依据，也计入熵分布。
-        #   PUNCT —— 所有非 CJK 字符抽象成的同一个「特殊汉字」邻居（：/，/数字/字母…逐字符计数，
-        #            累计进同一类型），参与熵分布计算；但【不作为「是否有邻居」的判定依据】；
-        #            输出时 PUNCT 不是合法结果 → 切掉（显示引擎不输出特殊字符）。
-        #   空(SEP/开头/结尾) —— 空集、无，不计入。
+        # ---- 复合熵（2.1.13 矩阵方案：2行×3列 = H汉字/P符号/E空 × 左/右）----
+        # 每词矩阵（次数，加权）：
+        #   左: H_L=l_han  P_L=l_punct  E_L=count_w-H_L-P_L
+        #   右: H_R=r_han  P_R=r_punct  E_R=count_w-H_R-P_R
+        # 派生指标：
+        #   Total       = H_L + H_R                     （总有效证据量）
+        #   Indep_Ratio = independent / count           （独立率）
+        #   Imbalance   = |H_L-H_R| / (H_L+H_R+1)       （左右失衡度）
         # 判定流程：
-        #   1) 两侧都无汉字邻居 → -1.0 豁免（纯独立标题，如长生修仙）。
-        #   2) 仅一侧有汉字邻居 → 忽略无汉字侧，只用该侧邻居分布（含该侧PUNCT）算熵；
-        #      但若该侧不空数据 < ENT_MIN_DATA（太少，不足为据）→ 豁免保留
-        #      （如斗破苍穹 右仅"之"×1、无限恐怖 右仅"之"×2 —— 不能回答"归属于谁"就不滤）。
-        #   3) 两侧都有汉字邻居：
-        #      a) 少侧不空次数 / 多侧不空次数 < 10%（不空=汉字次数+PUNCT次数）→
-        #         两侧邻居分布合并算总熵（救回一侧几乎全空的独立词，如苟在）；
-        #      b) 否则 → min(左熵, 右熵) 作判据（低熵在左/在右等价，两侧只要有一边低→依附）。
+        #   1) Total < ENT_TOTAL_MIN → 证据不足 → -1.0 豁免保留（一人之下 6<8）
+        #   2) Indep_Ratio < ENT_INDEP_MIN → 从不独立/模板词 → 直接过滤（置 0.0）
+        #   3) Imbalance > ENT_IMBALANCE_MAX → 严重失衡 → 合并左右全部邻居(H+P)算总熵（什么鬼）
+        #   4) 否则 → min(左熵, 右熵)（均衡时两侧只一边低即依附）
         l_cjk = list(l_groups.values())                        # 左汉字邻居权重
         r_cjk = [wsum for _, (_, wsum) in groups.items()]       # 右汉字邻居权重
         l_han = sum(l_cjk)
         r_han = sum(r_cjk)
-        l_full = l_cjk + ([l_punct] if l_punct > 0 else [])     # 左邻居分布（含PUNCT）
-        r_full = r_cjk + ([r_punct] if r_punct > 0 else [])     # 右邻居分布（含PUNCT）
-        l_non = l_han + l_punct      # 左不空次数（去掉开头/结尾空之后）
-        r_non = r_han + r_punct      # 右不空次数
-        if l_han == 0 and r_han == 0:
-            compound_ent = -1.0          # 两侧都无汉字邻居 → 豁免
-        elif l_han == 0:
-            # 忽略左侧，只用右侧；但右侧不空数据 < ENT_MIN_DATA（太少，不足为据）→ 豁免
-            compound_ent = -1.0 if r_non < ENT_MIN_DATA else _entropy_from_vals(r_full)
-        elif r_han == 0:
-            compound_ent = -1.0 if l_non < ENT_MIN_DATA else _entropy_from_vals(l_full)
-        elif ent_merge_ratio > 0 and min(l_non, r_non) / max(l_non, r_non) < ent_merge_ratio:
-            compound_ent = _entropy_from_vals(l_full + r_full)   # 一侧不空太少 → 合并
+        l_full = l_cjk + ([l_punct] if l_punct > 0 else [])     # 左邻居分布（汉字+符号）
+        r_full = r_cjk + ([r_punct] if r_punct > 0 else [])     # 右邻居分布（汉字+符号）
+        total = l_han + r_han
+        indep_ratio = (independent / count_w) if count_w > 0 else 0.0
+        imb = abs(l_han - r_han) / (l_han + r_han + 1.0)
+        if total < ENT_TOTAL_MIN:
+            compound_ent = -1.0          # 步骤1：证据不足 → 豁免
+        elif indep_ratio < ENT_INDEP_MIN:
+            compound_ent = 0.0           # 步骤2：从不独立 → 模板词 → 滤
+        elif imb > ENT_IMBALANCE_MAX:
+            compound_ent = _entropy_from_vals(l_full + r_full)   # 步骤3：失衡 → 合并全部邻居
         else:
-            compound_ent = min(_entropy_from_vals(l_full), _entropy_from_vals(r_full))
+            compound_ent = min(_entropy_from_vals(l_full), _entropy_from_vals(r_full))  # 步骤4
 
         if len(w) >= 2 and independent >= 1:
             candidates.append((w, count_w, independent, binding, compound_ent))
