@@ -352,21 +352,20 @@ def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, s
     # 前后集中度闸门（bind）：binding > 阈值的词视为寄生词剔除；默认 1.0 = 不过滤（基线）
     if bind_thresh < 1.0:
         candidates = [c for c in candidates if c[3] <= bind_thresh]
-    # 复合熵闸门（与 --bind 取 AND）：c[4] 为 compound_entropy；-1.0 表示无真实邻居证据，豁免
-    filtered_by_ent = []
+    # 独立率前置豁免：在「熵过滤」之前先验证独立性。
+    # 独立率(independent/count) >= 阈值的词，视为「经常自己站住脚」，提前免于熵过滤，
+    # 独立性判据先于熵判据生效——高独立率词不会被某一侧低熵压死。
+    exempt_words = set()
+    if indep_ratio > 0:
+        exempt_words = {c[0] for c in candidates if c[1] > 0 and (c[2] / c[1]) >= indep_ratio}
+        print(f'[{prefix}] 独立率前置豁免: {len(exempt_words)} 个高独立率词 (独立率≥{indep_ratio}, '
+              f'例: {", ".join(list(exempt_words)[:8])}…)', file=sys.stderr)
+    # 复合熵闸门（与 --bind 取 AND）：c[4] 为 compound_entropy；-1.0 表示无真实邻居证据，豁免；
+    # 独立率前置豁免词同样直接保留（不受熵门槛约束）。
     if min_ent > 0:
         before = len(candidates)
-        filtered_by_ent = [c for c in candidates if not (c[4] < 0 or c[4] >= min_ent)]
-        candidates = [c for c in candidates if c[4] < 0 or c[4] >= min_ent]
-        print(f'[{prefix}] 熵过滤: {before} → {len(candidates)} 词 (阈值 {min_ent})', file=sys.stderr)
-    # 独立率保护（熵过滤的后置恢复层）：被熵滤除、但 independent/count >= 阈值的词救回。
-    # 只恢复"熵台阶"误杀的词，不影响 bind 闸门结果；-1.0 豁免词本就保留、不在恢复范围。
-    if indep_ratio > 0 and filtered_by_ent:
-        rescued = [c for c in filtered_by_ent if c[1] > 0 and (c[2] / c[1]) >= indep_ratio]
-        if rescued:
-            candidates = candidates + rescued
-            print(f'[{prefix}] 独立率保护: 恢复 {len(rescued)} 个高独立率词 '
-                  f'(独立率≥{indep_ratio}, 例: {", ".join(w for w, *_ in rescued[:8])}…)', file=sys.stderr)
+        candidates = [c for c in candidates if c[0] in exempt_words or c[4] < 0 or c[4] >= min_ent]
+        print(f'[{prefix}] 熵过滤: {before} → {len(candidates)} 词 (阈值 {min_ent}, 含独立率豁免 {len(exempt_words)})', file=sys.stderr)
     print(f'[{prefix}] 候选词: {len(candidates)}  去重字符: {len(charfreq)}', file=sys.stderr)
     write_word_csv(os.path.join(out_dir, f'{prefix}_wordfreq.csv'), candidates)
     write_char_csv(os.path.join(out_dir, f'{prefix}_charfreq.csv'), charfreq)
@@ -412,7 +411,7 @@ def main():
     ap.add_argument('--no-cloud', action='store_true',
                     help='跳过词云/PNG/互动HTML渲染（仅生成 CSV），用于批量调参加速')
     ap.add_argument('--indep-ratio', type=float, default=0.0,
-                    help='独立率保护阈值（0=关闭，默认 0.25）：被熵滤除的词若 independent/count >= 阈值则恢复（高频独立成段词免受低熵误杀）；仅作熵过滤的后置恢复层')
+                    help='独立率保护阈值（0=关闭，默认 0.25）：独立率(independent/count) >= 阈值的词，在熵过滤之前即豁免保留（高频独立成段词免受低熵误杀）；前置豁免层')
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
