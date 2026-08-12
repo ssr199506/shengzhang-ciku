@@ -32,6 +32,8 @@ SEP = '\x00'      # 字段/run 边界（空：不参与熵、不生长）
 PUNCT = '\ue000'  # 标点哨兵：所有非 CJK 字符抽象成的同一个「特殊汉字」；参与熵计算，但不作为词生长原料、不进入候选词/词云（显示引擎不输出它）
 ENT_MERGE_RATIO = 0.25  # 复合熵「合并」触发比：两侧都有汉字邻居时，少侧不空/多侧不空 < 此值 → 合并两侧算总熵（0.20→0.25 调参优化：filt 率不变、误伤更少）
 ENT_MIN_DATA = 3        # 只用单侧算熵时，该侧不空次数 < 此值 → 数据不足，不足以为据 → 豁免保留
+POS_FIXED_THRESHOLD = 0.85  # 位置固定度豁免阈值：某侧"无真实汉字邻居"的出现占比（空+符号）/该词总次数 >= 此值，
+                            # 说明该侧低熵只是位置假象（句首/句末），不作为依附证据 —— 改侧不计入 min/合并 判据，只看另一侧。
 CJK_RE = re.compile(r'[\u4e00-\u9fff]+')
 
 
@@ -76,7 +78,7 @@ def _wsum(pos_list, wgt):
     return sum(wgt[p] for p in pos_list)
 
 
-def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True):
+def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True, pos_fixed_thr=POS_FIXED_THRESHOLD):
     """核心：单字种子 → 跳跃式 BFS 枚举最大重复 → 独立出现次数判据。
 
     标点哨兵 PUNCT 在 S 中作为邻居参与熵计算，但对生长/独立判定当墙（与 SEP 同视），
@@ -230,7 +232,25 @@ def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True
         r_full = r_cjk + ([r_punct] if r_punct > 0 else [])     # 右邻居分布（含PUNCT）
         l_non = l_han + l_punct      # 左不空次数（去掉开头/结尾空之后）
         r_non = r_han + r_punct      # 右不空次数
-        if l_han == 0 and r_han == 0:
+        l_empty = count_w - l_han - l_punct   # 左邻为空的累计次数
+        r_empty = count_w - r_han - r_punct   # 右邻为空的累计次数
+        # 位置固定度：某侧"无真实汉字邻居"的出现占比 = (空+符号)/次数。
+        # 占比高 ⇒ 该侧低熵只是位置假象（句首/句末），不作为依附证据。
+        # pos_fixed_thr <= 0 表示关闭该豁免（默认 0.85；设 0 不等同"全部固定"，而是"全部不参与"）。
+        if pos_fixed_thr > 0 and count_w:
+            l_fixed = (l_empty + l_punct) / count_w >= pos_fixed_thr
+            r_fixed = (r_empty + r_punct) / count_w >= pos_fixed_thr
+        else:
+            l_fixed = r_fixed = False
+        if l_fixed and r_fixed:
+            compound_ent = -1.0   # 两侧都位置固定 → 多半是独立成段的整词（书名等）→ 豁免
+        elif l_fixed:
+            # 左固定 → 只看右熵（沿用单侧逻辑：右侧不空数据不足则豁免）
+            compound_ent = -1.0 if (r_han == 0 or r_non < ENT_MIN_DATA) else _entropy_from_vals(r_full)
+        elif r_fixed:
+            # 右固定 → 只看左熵
+            compound_ent = -1.0 if (l_han == 0 or l_non < ENT_MIN_DATA) else _entropy_from_vals(l_full)
+        elif l_han == 0 and r_han == 0:
             compound_ent = -1.0          # 两侧都无汉字邻居 → 豁免
         elif l_han == 0:
             # 忽略左侧，只用右侧；但右侧不空数据 < ENT_MIN_DATA（太少，不足为据）→ 豁免
@@ -337,12 +357,12 @@ def detect_header(row, title_col, intro_col):
 
 
 # ---------------------------------------------------------------- 管线
-def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0, no_cloud=False, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True):
+def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0, no_cloud=False, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True, pos_fixed_thr=POS_FIXED_THRESHOLD):
     S, wgt = build_corpus(docs)
     if not S:
         return
     print(f'[{prefix}] 语料字符数(去重后): {len(S)}  run数: {S.count(SEP)+1 if S else 0}', file=sys.stderr)
-    candidates, charfreq = scan_and_grow(S, wgt, ent_merge_ratio, ent_punct_exempt)
+    candidates, charfreq = scan_and_grow(S, wgt, ent_merge_ratio, ent_punct_exempt, pos_fixed_thr)
     # 前后集中度闸门（bind）：binding > 阈值的词视为寄生词剔除；默认 1.0 = 不过滤（基线）
     if bind_thresh < 1.0:
         candidates = [c for c in candidates if c[3] <= bind_thresh]
@@ -393,6 +413,8 @@ def main():
                     help='(2.1.10 起废弃/无实际作用) PUNCT 恒作为抽象「特定汉字」邻居参与熵分布，但不作为「是否有邻居」的判定依据——该行为不可关闭，仅保留此开关兼容旧命令')
     ap.add_argument('--ent-merge-ratio', type=float, default=ENT_MERGE_RATIO,
                     help='合并触发比：两侧都有汉字邻居时，少侧不空次数/多侧不空次数 低于此值（默认 0.25，不空=汉字邻居次数+PUNCT次数）→ 两侧邻居分布合并算总熵；否则用 min(左熵,右熵)')
+    ap.add_argument('--pos-fixed', type=float, default=POS_FIXED_THRESHOLD,
+                    help='位置固定度豁免阈值（0=关闭，默认 0.85）：某侧"无汉字邻居"出现占比(空+符号)/次数 >= 阈值 → 该侧低熵视为位置假象、不计入判据，只看另一侧；两侧都固定则豁免（独立成段整词）。用于救回句首/句末被误杀的自由词')
     ap.add_argument('--no-cloud', action='store_true',
                     help='跳过词云/PNG/互动HTML渲染（仅生成 CSV），用于批量调参加速')
     args = ap.parse_args()
@@ -429,8 +451,8 @@ def main():
     title_raw = [t for t, i, w in dedup if t]
     intro_raw = [i for t, i, w in dedup if i]
 
-    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt)
-    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt)
+    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, pos_fixed_thr=args.pos_fixed)
+    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, pos_fixed_thr=args.pos_fixed)
     print(f'完成，输出目录: {args.out}')
 
 
