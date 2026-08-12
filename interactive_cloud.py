@@ -33,14 +33,15 @@ def select_cloud_words(candidates, top_n=200, maxlen=0):
 
 
 def emit_interactive(prefix, out_dir, candidates, raw_texts, top_n, maxlen, layout,
-                     standalone=False, max_examples=50):
+                     standalone=False):
     """写出互动词云。
 
     standalone=True  : 单文件内联 HTML（数据嵌进 HTML，双击即开，便于携带）。
     standalone=False : 外壳 HTML + 外部 data.js（HTML 恒定体积、可复用，数据任意大）。
 
-    两版共用数据均裁剪：matches 只留「总数 + 最多 max_examples 条例子索引」，
-    fields 只保留被例子引用的文本并重映射索引 → 大数据下体积恒定可控，渲染只触 top-N。
+    数据裁剪：fields 只保留「被任一词匹配引用的文本」并重映射索引（未匹配的原文不进产物，
+    避免 payload 暴涨）；至于每词匹配到多少条、面板展示多少条，一律给全量——
+    列表里每条小说地位平等、无主次，panel 自带滚动条即可承载，不再人为截断。
     """
     if layout is None:
         return
@@ -64,13 +65,13 @@ def emit_interactive(prefix, out_dir, candidates, raw_texts, top_n, maxlen, layo
         if not idxs:
             continue
         raw_matches[w] = idxs
-        used.update(idxs[:max_examples])
+        used.update(idxs)
     # 只保留被引用文本并重映射索引（其余原始文本不进产物）
     ordered = sorted(used)
     remap = {old: new for new, old in enumerate(ordered)}
     fields = [raw_texts[i] for i in ordered]
     matches = {w: {'count': len(raw_matches[w]),
-                   'examples': [remap[i] for i in raw_matches[w][:max_examples]]}
+                   'examples': [remap[i] for i in raw_matches[w]]}
                for w in raw_matches}
     data = {'size': [CLOUD_W, CLOUD_H], 'fields': fields,
             'words': words_info, 'matches': matches}
@@ -86,8 +87,7 @@ def emit_interactive(prefix, out_dir, candidates, raw_texts, top_n, maxlen, layo
     with open(os.path.join(out_dir, f'{prefix}_wordcloud.html'), 'w', encoding='utf-8') as f:
         f.write(html)
     total = sum(m['count'] for m in matches.values())
-    print(f'[{prefix}] 互动词云: {len(words_info)} 词, {total} 条匹配'
-          f'(每词展示截断至 {max_examples})', file=sys.stderr)
+    print(f'[{prefix}] 互动词云: {len(words_info)} 词, {total} 条匹配', file=sys.stderr)
 
 
 # ---------------------------------------------------------------- 网页渲染
@@ -180,9 +180,7 @@ function select(el){
 function openPanel(word){
   const m = DATA.matches[word] || {count: 0, examples: []};
   document.getElementById('ptitle').textContent = word;
-  const shown = m.examples.length;
-  document.getElementById('pcnt').textContent = '匹配 ' + m.count + ' 条'
-      + (shown < m.count ? '（展示前 ' + shown + '）' : '');
+  document.getElementById('pcnt').textContent = '匹配 ' + m.count + ' 条';
   const body = document.getElementById('pbody');
   body.innerHTML = '';
   if (!m.count){ body.innerHTML = '<div class="empty">（无匹配文本）</div>'; }
