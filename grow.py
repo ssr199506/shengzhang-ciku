@@ -30,6 +30,7 @@ from interactive_cloud import CLOUD_W, CLOUD_H, emit_interactive
 
 SEP = '\x00'      # 字段/run 边界（不参与熵、不生长）
 PUNCT = '\ue000'  # 标点哨兵：单字符；参与熵计算，但不作为词生长原料、不进入候选词/词云
+ENT_MERGE_RATIO = 0.10  # 复合熵「第二模式」触发比：少侧/多侧有效权重比 < 此值 → 合并两侧算总熵
 CJK_RE = re.compile(r'[\u4e00-\u9fff]+')
 
 
@@ -71,7 +72,7 @@ def _wsum(pos_list, wgt):
     return sum(wgt[p] for p in pos_list)
 
 
-def scan_and_grow(S, wgt):
+def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO):
     """核心：单字种子 → 跳跃式 BFS 枚举最大重复 → 独立出现次数判据。
 
     标点哨兵 PUNCT 在 S 中作为邻居参与熵计算，但对生长/独立判定当墙（与 SEP 同视），
@@ -213,14 +214,21 @@ def scan_and_grow(S, wgt):
             l_vals.append(l_punct)
         l_has = len(l_vals) > 0
         r_has = len(r_vals) > 0
-        if l_has and r_has:
+        l_w = sum(l_vals)
+        r_w = sum(r_vals)
+        if not l_has and not r_has:
+            compound_ent = -1.0          # 两侧皆无真实邻居 → 豁免
+        elif ent_merge_ratio > 0 and max(l_w, r_w) > 0 \
+                and min(l_w, r_w) / max(l_w, r_w) < ent_merge_ratio:
+            # 第二模式（10% 阈值）：一侧有效权重明显少于另一侧 → 把稀少侧合并进多侧，
+            # 一起算总熵，避免「一侧空结果主导 min」把独立成词/常内嵌的真短语压成 0 熵。
+            compound_ent = _entropy_from_vals(l_vals + r_vals)
+        elif l_has and r_has:
             compound_ent = min(_entropy_from_vals(l_vals), _entropy_from_vals(r_vals))
         elif l_has:
             compound_ent = _entropy_from_vals(l_vals)
-        elif r_has:
-            compound_ent = _entropy_from_vals(r_vals)
         else:
-            compound_ent = -1.0
+            compound_ent = _entropy_from_vals(r_vals)
 
         if len(w) >= 2 and independent >= 1:
             candidates.append((w, count_w, independent, binding, compound_ent))
@@ -317,12 +325,12 @@ def detect_header(row, title_col, intro_col):
 
 
 # ---------------------------------------------------------------- 管线
-def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0, no_cloud=False):
+def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0, no_cloud=False, ent_merge_ratio=ENT_MERGE_RATIO):
     S, wgt = build_corpus(docs)
     if not S:
         return
     print(f'[{prefix}] 语料字符数(去重后): {len(S)}  run数: {S.count(SEP)+1 if S else 0}', file=sys.stderr)
-    candidates, charfreq = scan_and_grow(S, wgt)
+    candidates, charfreq = scan_and_grow(S, wgt, ent_merge_ratio)
     # 前后集中度闸门（bind）：binding > 阈值的词视为寄生词剔除；默认 1.0 = 不过滤（基线）
     if bind_thresh < 1.0:
         candidates = [c for c in candidates if c[3] <= bind_thresh]
@@ -367,6 +375,10 @@ def main():
                     help='复合熵阈值（compound_entropy）：仅保留 >= 阈值的词；-1.0(无邻居证据)豁免；默认 0.0=不过滤（基线），推荐 0.5~1.0')
     ap.add_argument('--no-punct-ent', action='store_true',
                     help='关闭标点感知熵：非CJK不保留为哨兵（等价于 2.1.4 行为），便于与标点感知版对照调参')
+    ap.add_argument('--no-merge', action='store_true',
+                    help='关闭复合熵第二模式（合并熵）：恒用 min(左熵,右熵)；默认开启，按 --ent-merge-ratio 触发合并两侧算总熵')
+    ap.add_argument('--ent-merge-ratio', type=float, default=ENT_MERGE_RATIO,
+                    help='第二模式触发比：少侧/多侧有效权重比低于此值才合并（默认 0.10）')
     ap.add_argument('--no-cloud', action='store_true',
                     help='跳过词云/PNG/互动HTML渲染（仅生成 CSV），用于批量调参加速')
     args = ap.parse_args()
@@ -397,13 +409,14 @@ def main():
 
     # 两条独立管线：结果不混淆
     use_punct = not args.no_punct_ent
+    ent_merge_ratio = 0.0 if args.no_merge else args.ent_merge_ratio
     title_docs = [(clean(t, use_punct), w) for t, i, w in dedup if t]
     intro_docs = [(clean(i, use_punct), w) for t, i, w in dedup if i]
     title_raw = [t for t, i, w in dedup if t]
     intro_raw = [i for t, i, w in dedup if i]
 
-    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud)
-    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud)
+    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio)
+    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio)
     print(f'完成，输出目录: {args.out}')
 
 
