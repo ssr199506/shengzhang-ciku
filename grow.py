@@ -202,42 +202,31 @@ def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True
         right_conc = (max(w_ for _, w_ in groups.values()) / total_r) if total_r > 0 else 0.0
         binding = max(left_conc, right_conc)
 
-        # ---- 复合熵（边界 SEP/串首尾 不参与；标点哨兵 PUNCT 作为真实邻居参与；
-        #      两侧皆无真实邻居 → -1.0 表示熵不适用） ----
-        # 右邻分布：真实 CJK 邻居 + 标点哨兵
-        r_vals = [wsum for _, (_, wsum) in groups.items()]
-        if r_punct > 0:
-            r_vals.append(r_punct)
-        # 左邻分布：真实 CJK 邻居 + 标点哨兵
-        l_vals = list(l_groups.values())
-        if l_punct > 0:
-            l_vals.append(l_punct)
-        l_has = len(l_vals) > 0
-        r_has = len(r_vals) > 0
-        l_w = sum(l_vals)
-        r_w = sum(r_vals)
-        # 真实 CJK 邻居（不含 PUNCT/边界）：用于豁免判定。
-        # PUNCT 仅作为熵的「统计信号」参与计算，本身不算「真实上下文」——
-        # 否则纯独立标题（长生修仙等，左右只有边界/PUNCT）会被踢出豁免、进统计层后熵=0 被滤。
-        l_real_has = len(l_groups) > 0
-        r_real_has = len(groups) > 0
-        if ent_punct_exempt:
-            exempt_no_real = (not l_real_has and not r_real_has)
+        # ---- 复合熵（2.1.8 修正）----
+        # SEP 与 PUNCT 哨兵都视为「无效数据」，一律不计入熵。
+        #   · 仅取纯 CJK 邻居的权重（l_groups / groups 本就只含 CJK）；
+        #   · 某一侧若全是无效数据（无纯 CJK 邻居）→ 直接忽略该侧，只看另一侧的有效熵；
+        #   · 两侧皆无纯 CJK 邻居（仅 SEP/PUNCT）→ -1.0 豁免。
+        # 旧版把 PUNCT 当「真实邻居」塞进熵值，使「左侧全边界」被当成「单侧退化邻居(熵=0)」，
+        # 经 min() 压死（典型误杀：万族 左全无效、右有{直,之,王} 本应保留却被判 0）。现已修正为
+        # 忽略全无效侧、只取另一侧有效熵。--no-punct-exempt 开关自此与默认等价（PUNCT 始终不计入）。
+        l_cjk = list(l_groups.values())                       # 纯 CJK 左邻权重
+        r_cjk = [wsum for _, (_, wsum) in groups.items()]      # 纯 CJK 右邻权重
+        l_w = sum(l_cjk)
+        r_w = sum(r_cjk)
+        if l_w == 0 and r_w == 0:
+            compound_ent = -1.0          # 两侧皆无真实 CJK 邻居（仅 SEP/PUNCT）→ 豁免
+        elif l_w > 0 and r_w > 0:
+            # 两侧均有效：少侧/多侧有效权重比 < 阈值 时合并算总熵，
+            # 避免「一侧稀疏主导 min」把真短语压成 0 熵（第二模式，2.1.6）。
+            if ent_merge_ratio > 0 and min(l_w, r_w) / max(l_w, r_w) < ent_merge_ratio:
+                compound_ent = _entropy_from_vals(l_cjk + r_cjk)
+            else:
+                compound_ent = min(_entropy_from_vals(l_cjk), _entropy_from_vals(r_cjk))
+        elif l_w > 0:
+            compound_ent = _entropy_from_vals(l_cjk)   # 仅左有效 → 忽略右
         else:
-            exempt_no_real = (not l_has and not r_has)
-        if exempt_no_real:
-            compound_ent = -1.0          # 两侧皆无真实 CJK 邻居（仅 PUNCT/边界）→ 豁免
-        elif ent_merge_ratio > 0 and max(l_w, r_w) > 0 \
-                and min(l_w, r_w) / max(l_w, r_w) < ent_merge_ratio:
-            # 第二模式（10% 阈值）：一侧有效权重明显少于另一侧 → 把稀少侧合并进多侧，
-            # 一起算总熵，避免「一侧空结果主导 min」把独立成词/常内嵌的真短语压成 0 熵。
-            compound_ent = _entropy_from_vals(l_vals + r_vals)
-        elif l_has and r_has:
-            compound_ent = min(_entropy_from_vals(l_vals), _entropy_from_vals(r_vals))
-        elif l_has:
-            compound_ent = _entropy_from_vals(l_vals)
-        else:
-            compound_ent = _entropy_from_vals(r_vals)
+            compound_ent = _entropy_from_vals(r_cjk)   # 仅右有效 → 忽略左
 
         if len(w) >= 2 and independent >= 1:
             candidates.append((w, count_w, independent, binding, compound_ent))
@@ -387,7 +376,7 @@ def main():
     ap.add_argument('--no-merge', action='store_true',
                     help='关闭复合熵第二模式（合并熵）：恒用 min(左熵,右熵)；默认开启，按 --ent-merge-ratio 触发合并两侧算总熵')
     ap.add_argument('--no-punct-exempt', action='store_true',
-                    help='关闭标点豁免：PUNCT 重新算作「真实邻居」触发豁免判定（旧行为），便于对照。默认开启——PUNCT 仅作熵统计信号，不改变纯独立标题的豁免状态')
+                    help='(2.1.8 起已废弃/等价默认) PUNCT 与 SEP 一致视为无效数据、始终不计入熵，故该开关不再改变结果，仅保留以兼容旧命令')
     ap.add_argument('--ent-merge-ratio', type=float, default=ENT_MERGE_RATIO,
                     help='第二模式触发比：少侧/多侧有效权重比低于此值才合并（默认 0.10）')
     ap.add_argument('--no-cloud', action='store_true',
