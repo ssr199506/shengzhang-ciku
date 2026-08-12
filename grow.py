@@ -30,7 +30,7 @@ from interactive_cloud import CLOUD_W, CLOUD_H, emit_interactive
 
 SEP = '\x00'      # 字段/run 边界（空：不参与熵、不生长）
 PUNCT = '\ue000'  # 标点哨兵：所有非 CJK 字符抽象成的同一个「特殊汉字」；参与熵计算，但不作为词生长原料、不进入候选词/词云（显示引擎不输出它）
-ENT_MERGE_RATIO = 0.20  # 复合熵「合并」触发比：两侧都有汉字邻居时，少侧不空/多侧不空 < 此值 → 合并两侧算总熵
+ENT_MERGE_RATIO = 0.25  # 复合熵「合并」触发比：两侧都有汉字邻居时，少侧不空/多侧不空 < 此值 → 合并两侧算总熵（0.20→0.25 调参优化：filt 率不变、误伤更少）
 ENT_MIN_DATA = 3        # 只用单侧算熵时，该侧不空次数 < 此值 → 数据不足，不足以为据 → 豁免保留
 CJK_RE = re.compile(r'[\u4e00-\u9fff]+')
 
@@ -392,7 +392,7 @@ def main():
     ap.add_argument('--no-punct-exempt', action='store_true',
                     help='(2.1.10 起废弃/无实际作用) PUNCT 恒作为抽象「特定汉字」邻居参与熵分布，但不作为「是否有邻居」的判定依据——该行为不可关闭，仅保留此开关兼容旧命令')
     ap.add_argument('--ent-merge-ratio', type=float, default=ENT_MERGE_RATIO,
-                    help='合并触发比：两侧都有汉字邻居时，少侧不空次数/多侧不空次数 低于此值（默认 0.20，不空=汉字邻居次数+PUNCT次数）→ 两侧邻居分布合并算总熵；否则用 min(左熵,右熵)')
+                    help='合并触发比：两侧都有汉字邻居时，少侧不空次数/多侧不空次数 低于此值（默认 0.25，不空=汉字邻居次数+PUNCT次数）→ 两侧邻居分布合并算总熵；否则用 min(左熵,右熵)')
     ap.add_argument('--no-cloud', action='store_true',
                     help='跳过词云/PNG/互动HTML渲染（仅生成 CSV），用于批量调参加速')
     args = ap.parse_args()
