@@ -100,7 +100,7 @@ def run_test(seed, weighted=False, verbose=False):
         docs = [(run, 1) for run in parts]
     S, wgt = build_corpus(docs)
 
-    got = {w: (c, ind) for w, c, ind in scan_and_grow(S, wgt)[0]}
+    got = {w: (c, ind) for w, c, ind, bind, _ in scan_and_grow(S, wgt)[0]}
     exp = brute_corpus(S, wgt)
 
     assert set(got) == set(exp), (

@@ -22,6 +22,7 @@ import csv
 import os
 import re
 import sys
+import math
 from collections import Counter
 
 from interactive_cloud import CLOUD_W, CLOUD_H, emit_interactive
@@ -112,6 +113,18 @@ def scan_and_grow(S, wgt):
 
     # BFS 队列：入队 (word, pos_list)，word 的加权 count >= 2
     from collections import deque
+
+    def _entropy_from_vals(vals):
+        """从频次列表计算熵（以 2 为底）"""
+        total = sum(vals)
+        if total == 0:
+            return 0.0
+        ent = 0.0
+        for v in vals:
+            p = v / total
+            ent -= p * math.log2(p)
+        return ent
+
     queue = deque()
     seen = set()
     for ch, plist in pos_single.items():
@@ -164,8 +177,22 @@ def scan_and_grow(S, wgt):
         right_conc = (max(w_ for _, w_ in groups.values()) / total_r) if total_r > 0 else 0.0
         binding = max(left_conc, right_conc)
 
+        # ---- 复合熵（边界不参与；两侧皆无真实邻居 → -1.0 表示熵不适用） ----
+        l_vals = list(l_groups.values())
+        r_vals = [wsum for _, (_, wsum) in groups.items()]
+        l_has = len(l_vals) > 0
+        r_has = len(r_vals) > 0
+        if l_has and r_has:
+            compound_ent = min(_entropy_from_vals(l_vals), _entropy_from_vals(r_vals))
+        elif l_has:
+            compound_ent = _entropy_from_vals(l_vals)
+        elif r_has:
+            compound_ent = _entropy_from_vals(r_vals)
+        else:
+            compound_ent = -1.0
+
         if len(w) >= 2 and independent >= 1:
-            candidates.append((w, count_w, independent, binding))
+            candidates.append((w, count_w, independent, binding, compound_ent))
 
         # 继续生长：右邻字符分支（加权 count >= 2 才可能成为词）
         for c, (pl, wsum) in groups.items():
@@ -182,9 +209,9 @@ def scan_and_grow(S, wgt):
 def write_word_csv(path, candidates):
     with open(path, 'w', newline='', encoding='utf-8-sig') as f:
         wr = csv.writer(f)
-        wr.writerow(['word', 'count', 'independent', 'bind', 'len'])
-        for w, cnt, ind, bind in sorted(candidates, key=lambda x: (-x[1], x[0])):
-            wr.writerow([w, cnt, ind, round(bind, 4), len(w)])
+        wr.writerow(['word', 'count', 'independent', 'bind', 'len', 'compound_entropy'])
+        for w, cnt, ind, bind, ent in sorted(candidates, key=lambda x: (-x[1], x[0])):
+            wr.writerow([w, cnt, ind, round(bind, 4), len(w), round(ent, 4)])
 
 
 def write_char_csv(path, charfreq):
@@ -203,7 +230,7 @@ def render_cloud(path, candidates, top_n=200, maxlen=0, font_path=None):
     if font_path is None:
         font_path = _pick_font()
     freqs = {}
-    for w, cnt, ind in candidates:
+    for w, cnt, ind, bind, _ in candidates:
         if maxlen and len(w) > maxlen:
             continue
         freqs[w] = cnt
@@ -259,7 +286,7 @@ def detect_header(row, title_col, intro_col):
 
 
 # ---------------------------------------------------------------- 管线
-def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0):
+def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0):
     S, wgt = build_corpus(docs)
     if not S:
         return
@@ -268,6 +295,11 @@ def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, s
     # 前后集中度闸门（bind）：binding > 阈值的词视为寄生词剔除；默认 1.0 = 不过滤（基线）
     if bind_thresh < 1.0:
         candidates = [c for c in candidates if c[3] <= bind_thresh]
+    # 复合熵闸门（与 --bind 取 AND）：c[4] 为 compound_entropy；-1.0 表示无真实邻居证据，豁免
+    if min_ent > 0:
+        before = len(candidates)
+        candidates = [c for c in candidates if c[4] < 0 or c[4] >= min_ent]
+        print(f'[{prefix}] 熵过滤: {before} → {len(candidates)} 词 (阈值 {min_ent})', file=sys.stderr)
     print(f'[{prefix}] 候选词: {len(candidates)}  去重字符: {len(charfreq)}', file=sys.stderr)
     write_word_csv(os.path.join(out_dir, f'{prefix}_wordfreq.csv'), candidates)
     write_char_csv(os.path.join(out_dir, f'{prefix}_charfreq.csv'), charfreq)
@@ -298,6 +330,8 @@ def main():
                     help='互动词云生成单文件内联 HTML（默认生成外壳 HTML + 外部 data.js，体积恒定可复用）')
     ap.add_argument('--bind', type=float, default=1.0,
                     help='前后集中度闸门阈值（binding）：binding 大于该值的词视为寄生词剔除；默认 1.0=不过滤（基线）')
+    ap.add_argument('--min-ent', type=float, default=0.0,
+                    help='复合熵阈值（compound_entropy）：仅保留 >= 阈值的词；-1.0(无邻居证据)豁免；默认 0.0=不过滤（基线），推荐 0.5~1.0')
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -330,8 +364,8 @@ def main():
     title_raw = [t for t, i, w in dedup if t]
     intro_raw = [i for t, i, w in dedup if i]
 
-    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind)
-    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind)
+    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent)
+    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent)
     print(f'完成，输出目录: {args.out}')
 
 
