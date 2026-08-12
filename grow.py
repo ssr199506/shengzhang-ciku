@@ -34,14 +34,18 @@ CJK_RE = re.compile(r'[\u4e00-\u9fff]+')
 
 
 # ---------------------------------------------------------------- 清洗层
-def clean(text):
-    """连续 CJK 保留为 run；run 之间的非 CJK（标点/空白）折叠为单个标点哨兵 PUNCT。
-    PUNCT 作为熵计算的“邻居信号”参与统计，但不作为词生长原料、不进入候选词/词云。
+def clean(text, use_punct=True):
+    """连续 CJK 保留为 run；run 之间的非 CJK（标点/空白）折叠为单个哨兵。
+
+    use_punct=True （默认，2.1.5 行为）：run 间用标点哨兵 PUNCT 连接，
+        PUNCT 作为熵计算的“邻居信号”参与统计，但不作为词生长原料、不进入候选词/词云。
+    use_punct=False（关闭标点感知熵，等价 2.1.4 行为）：run 间用边界 SEP 连接，
+        非 CJK 整体丢弃，便于与标点感知版对照调参。
     字段间连接由 build_corpus 用 SEP 完成。"""
     runs = CJK_RE.findall(text or '')
     if not runs:
         return ''
-    return PUNCT.join(runs)
+    return (PUNCT if use_punct else SEP).join(runs)
 
 
 def build_corpus(docs):
@@ -359,6 +363,8 @@ def main():
                     help='前后集中度闸门阈值（binding）：binding 大于该值的词视为寄生词剔除；默认 1.0=不过滤（基线）')
     ap.add_argument('--min-ent', type=float, default=0.0,
                     help='复合熵阈值（compound_entropy）：仅保留 >= 阈值的词；-1.0(无邻居证据)豁免；默认 0.0=不过滤（基线），推荐 0.5~1.0')
+    ap.add_argument('--no-punct-ent', action='store_true',
+                    help='关闭标点感知熵：非CJK不保留为哨兵（等价于 2.1.4 行为），便于与标点感知版对照调参')
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -386,8 +392,9 @@ def main():
         dedup = [(t, i, w) for (t, i), w in Counter(rows).items()]
 
     # 两条独立管线：结果不混淆
-    title_docs = [(clean(t), w) for t, i, w in dedup if t]
-    intro_docs = [(clean(i), w) for t, i, w in dedup if i]
+    use_punct = not args.no_punct_ent
+    title_docs = [(clean(t, use_punct), w) for t, i, w in dedup if t]
+    intro_docs = [(clean(i, use_punct), w) for t, i, w in dedup if i]
     title_raw = [t for t, i, w in dedup if t]
     intro_raw = [i for t, i, w in dedup if i]
 
