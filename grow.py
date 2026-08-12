@@ -70,24 +70,66 @@ def build_corpus(docs):
     return ''.join(parts), wgt
 
 
+# ---------------------------------------------------------------- 凝固度支撑
+def build_ngram_freq(S, wgt, max_len=8):
+    """对语料做一次性加权 n-gram 频次统计（仅 CJK run 内，PUNCT/SEP 当墙）。
+
+    返回 (freq, N_char)：
+      freq[sub] = 子串 sub 在语料中的加权出现次数（按 run 权重累计）；
+      N_char   = 全部 CJK 字符的加权总数（PMI 概率归一化用的语料规模）。
+
+    用途：凝固度（内部字间互信息 PMI）需要「词本身」及「各切分半段」的出现频次，
+          本函数一次性给出，供 scan_and_grow 对每个候选词查表即可。"""
+    freq = {}
+    N_char = 0
+    n = len(S)
+    i = 0
+    while i < n:
+        ch = S[i]
+        if ch == SEP or ch == PUNCT:
+            i += 1
+            continue
+        # 取一段连续 CJK run（到 SEP/PUNCT 为止）
+        j = i
+        while j < n and S[j] != SEP and S[j] != PUNCT:
+            j += 1
+        run = S[i:j]
+        w_run = wgt[i]           # run 内权重一致（build_corpus 保证）
+        L = len(run)
+        N_char += w_run * L
+        top = min(L, max_len)
+        for a in range(L):
+            for b in range(a + 1, min(L, a + top) + 1):
+                sub = run[a:b]
+                freq[sub] = freq.get(sub, 0) + w_run
+        i = j
+    return freq, N_char
+
+
+
 # ---------------------------------------------------------------- 生长层 + 判定层
 def _wsum(pos_list, wgt):
     """按权重求出现次数。"""
     return sum(wgt[p] for p in pos_list)
 
 
-def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True):
+def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True,
+                  cohesion_max_len=8):
     """核心：单字种子 → 跳跃式 BFS 枚举最大重复 → 独立出现次数判据。
 
     标点哨兵 PUNCT 在 S 中作为邻居参与熵计算，但对生长/独立判定当墙（与 SEP 同视），
     且不进入候选词、字频表、词云。
 
     返回 (candidates, charfreq)
-        candidates: [(word, count, independent, binding, compound_ent)]，
+        candidates: [(word, count, independent, binding, compound_ent, cohesion)]，
                     len(word)>=2 且 independent>=1
+          cohesion = 该词内部字间互信息（凝固度）最小值：min_split log2(count(w)·N / (count左·count右))；
+                    纯 CJK 词内部绑定越强值越大；len<2 或 >cohesion_max_len 时为 N/A(0.0)。
         charfreq:   {char: 加权出现次数}（不含 PUNCT/SEP）
     """
     n = len(S)
+    # 凝固度支撑：一次性加权 n-gram 频次表（仅 CJK run）
+    ngram_freq, N_char = build_ngram_freq(S, wgt, cohesion_max_len)
 
     # 单字扫描：pos_single[char]=出现位置；charfreq 按权重累加
     pos_single = {}
@@ -242,8 +284,30 @@ def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True
         else:
             compound_ent = min(_entropy_from_vals(l_full), _entropy_from_vals(r_full))
 
+        # ---- 凝固度（cohesion）：词「内部」字间互信息，与上面「外部」邻居熵正交。
+        # 取所有切分点的最小 PMI：值越大说明内部字间绑定越强（越像一个词）；
+        # 值低/负说明两半段近似独立共现（如"之"+"巅"、"我"+"能"），更像松散搭配/词缀碎片。
+        # 例：之巅/之神/之子 内部无关联 → PMI 低；什么鬼/一人之下 强绑定 → PMI 高。
+        cohesion = 0.0   # N/A 默认（len<2 或超长词直接放行，交由熵判据）
+        if len(w) >= 2 and len(w) <= cohesion_max_len and N_char > 0:
+            c_w = ngram_freq.get(w, count_w)
+            coh = float('inf')
+            for i in range(1, len(w)):
+                left, right = w[:i], w[i:]
+                cl = ngram_freq.get(left, 0)
+                cr = ngram_freq.get(right, 0)
+                if cl > 0 and cr > 0:
+                    pmi = math.log2(c_w * N_char / (cl * cr))
+                    if pmi < coh:
+                        coh = pmi
+                else:
+                    coh = float('-inf')   # 半段缺失（理论上不会发生）→ 视为不凝固
+                    break
+            if coh != float('inf'):
+                cohesion = coh
+
         if len(w) >= 2 and independent >= 1:
-            candidates.append((w, count_w, independent, binding, compound_ent))
+            candidates.append((w, count_w, independent, binding, compound_ent, cohesion))
 
         # 继续生长：右邻字符分支（加权 count >= 2 才可能成为词）
         for c, (pl, wsum) in groups.items():
@@ -260,9 +324,9 @@ def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True
 def write_word_csv(path, candidates):
     with open(path, 'w', newline='', encoding='utf-8-sig') as f:
         wr = csv.writer(f)
-        wr.writerow(['word', 'count', 'independent', 'bind', 'len', 'compound_entropy'])
-        for w, cnt, ind, bind, ent in sorted(candidates, key=lambda x: (-x[1], x[0])):
-            wr.writerow([w, cnt, ind, round(bind, 4), len(w), round(ent, 4)])
+        wr.writerow(['word', 'count', 'independent', 'bind', 'len', 'compound_entropy', 'cohesion'])
+        for w, cnt, ind, bind, ent, coh in sorted(candidates, key=lambda x: (-x[1], x[0])):
+            wr.writerow([w, cnt, ind, round(bind, 4), len(w), round(ent, 4), round(coh, 4)])
 
 
 def write_char_csv(path, charfreq):
@@ -281,7 +345,7 @@ def render_cloud(path, candidates, top_n=200, maxlen=0, font_path=None):
     if font_path is None:
         font_path = _pick_font()
     freqs = {}
-    for w, cnt, ind, bind, _ in candidates:
+    for w, cnt, ind, bind, _, _ in candidates:
         if maxlen and len(w) > maxlen:
             continue
         freqs[w] = cnt
@@ -337,7 +401,7 @@ def detect_header(row, title_col, intro_col):
 
 
 # ---------------------------------------------------------------- 管线
-def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0, no_cloud=False, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True):
+def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0, no_cloud=False, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True, min_cohesion=0.0):
     S, wgt = build_corpus(docs)
     if not S:
         return
@@ -351,6 +415,12 @@ def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, s
         before = len(candidates)
         candidates = [c for c in candidates if c[4] < 0 or c[4] >= min_ent]
         print(f'[{prefix}] 熵过滤: {before} → {len(candidates)} 词 (阈值 {min_ent})', file=sys.stderr)
+    # 凝固度闸门（第二信号，与熵取 AND）：c[5] 为 cohesion(PMI)。单字/超长词无内部绑定概念，直接放行；
+    # 其余要求 内部互信息 >= 阈值，否则视为"字间松散搭配/词缀碎片"(如之巅/我能)滤除。
+    if min_cohesion > 0:
+        before = len(candidates)
+        candidates = [c for c in candidates if len(c[0]) < 2 or c[5] >= min_cohesion]
+        print(f'[{prefix}] 凝固度过滤: {before} → {len(candidates)} 词 (阈值 {min_cohesion})', file=sys.stderr)
     print(f'[{prefix}] 候选词: {len(candidates)}  去重字符: {len(charfreq)}', file=sys.stderr)
     write_word_csv(os.path.join(out_dir, f'{prefix}_wordfreq.csv'), candidates)
     write_char_csv(os.path.join(out_dir, f'{prefix}_charfreq.csv'), charfreq)
@@ -393,6 +463,8 @@ def main():
                     help='(2.1.10 起废弃/无实际作用) PUNCT 恒作为抽象「特定汉字」邻居参与熵分布，但不作为「是否有邻居」的判定依据——该行为不可关闭，仅保留此开关兼容旧命令')
     ap.add_argument('--ent-merge-ratio', type=float, default=ENT_MERGE_RATIO,
                     help='合并触发比：两侧都有汉字邻居时，少侧不空次数/多侧不空次数 低于此值（默认 0.25，不空=汉字邻居次数+PUNCT次数）→ 两侧邻居分布合并算总熵；否则用 min(左熵,右熵)')
+    ap.add_argument('--cohesion', type=float, default=0.0,
+                    help='凝固度(PMI)闸门阈值（0=关闭）：候选词内部字间互信息最小值 >= 阈值才保留，否则视为松散搭配/词缀碎片滤除（如之巅/我能）；与熵闸门取 AND。仅对 len>=2 词生效，单字/超长词直接放行')
     ap.add_argument('--no-cloud', action='store_true',
                     help='跳过词云/PNG/互动HTML渲染（仅生成 CSV），用于批量调参加速')
     args = ap.parse_args()
@@ -429,8 +501,8 @@ def main():
     title_raw = [t for t, i, w in dedup if t]
     intro_raw = [i for t, i, w in dedup if i]
 
-    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt)
-    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt)
+    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, min_cohesion=args.cohesion)
+    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, min_cohesion=args.cohesion)
     print(f'完成，输出目录: {args.out}')
 
 
