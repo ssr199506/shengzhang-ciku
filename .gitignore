@@ -5,3 +5,6 @@ out/
 out_real/
 __pycache__/
 *wordcloud*
+
+# 大样本数据（33M，不入库）
+大样本/
