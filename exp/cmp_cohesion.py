@@ -54,11 +54,22 @@ def main():
     ap.add_argument("--ent-merge-ratio", type=float, default=0.25)
     ap.add_argument("--cohesion", type=float, nargs="*",
                     default=[0.0, 0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 3.0])
+    ap.add_argument("--cohesion-metric", choices=["ami", "npmi", "pmi"], default="ami")
+    ap.add_argument("--cohesion-smooth", type=float, default=1.0)
+    ap.add_argument("--cohesion-rare-k", type=float, default=0.0)
     args = ap.parse_args()
 
     docs = build_title()
     S, wgt = grow.build_corpus(docs)
-    cands, _ = grow.scan_and_grow(S, wgt, args.ent_merge_ratio, True)
+    cands, _ = grow.scan_and_grow(S, wgt, args.ent_merge_ratio, True,
+                                 cohesion_metric=args.cohesion_metric,
+                                 cohesion_smooth=args.cohesion_smooth,
+                                 cohesion_rare_k=args.cohesion_rare_k)
+    # 校准对比用：旧 min-PMI（无论主度量选啥都算一份）
+    cands_pmi, _ = grow.scan_and_grow(S, wgt, args.ent_merge_ratio, True,
+                                      cohesion_metric="pmi",
+                                      cohesion_smooth=args.cohesion_smooth)
+    wc_pmi = {c[0]: c for c in cands_pmi}
 
     def apply(min_ent, min_coh):
         out = []
@@ -75,13 +86,14 @@ def main():
         return out
 
     print(f"全量候选词(去重, ind>=1, len>=2): {len(cands)}   min_ent={args.min_ent}\n")
-    # 校准：打印 WATCH 词的 (熵, 凝固度)
+    # 校准：打印 WATCH 词的 (熵, 新凝聚度, 旧PMI凝聚)
     wc = {c[0]: c for c in cands}
-    print("=== 关键词 校准 (count, 独立率, 熵, 凝固度) ===")
+    print(f"=== 关键词 校准 (count, 独立率, 熵, 新凝聚[{args.cohesion_metric}], 旧PMI)  smooth={args.cohesion_smooth} ===")
     for w in WATCH:
         if w in wc:
             _, cnt, ind, bind, ent, coh = wc[w]
-            print(f"  {w:8s} cnt={cnt:>5} ind={ind:>5} ({100*ind/cnt:4.1f}%) 熵={ent:5.2f} 凝聚={coh:6.2f}")
+            pmi = wc_pmi[w][5] if w in wc_pmi else float('nan')
+            print(f"  {w:8s} cnt={cnt:>5} ind={ind:>5} ({100*ind/cnt:4.1f}%) 熵={ent:5.2f} 凝={coh:6.2f} PMI={pmi:6.2f}")
     print()
 
     print("=== 凝固度阈值扫描 (熵闸门固定 me=%.2f) ===" % args.min_ent)

@@ -114,7 +114,7 @@ def _wsum(pos_list, wgt):
 
 
 def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True,
-                  cohesion_max_len=8):
+                  cohesion_max_len=8, cohesion_metric='pmi', cohesion_smooth=1.0, cohesion_rare_k=0.0):
     """核心：单字种子 → 跳跃式 BFS 枚举最大重复 → 独立出现次数判据。
 
     标点哨兵 PUNCT 在 S 中作为邻居参与熵计算，但对生长/独立判定当墙（与 SEP 同视），
@@ -123,8 +123,15 @@ def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True
     返回 (candidates, charfreq)
         candidates: [(word, count, independent, binding, compound_ent, cohesion)]，
                     len(word)>=2 且 independent>=1
-          cohesion = 该词内部字间互信息（凝固度）最小值：min_split log2(count(w)·N / (count左·count右))；
-                    纯 CJK 词内部绑定越强值越大；len<2 或 >cohesion_max_len 时为 N/A(0.0)。
+          cohesion = 该词内部字间互信息（凝固度），衡量「内部字间绑定强度」，值域随度量不同：
+                    2.1.17 min-PMI：取最弱切分点 log2(cw·N/(cl·cr))，罕见字分母被低估→虚高（之巅漏网）；
+                    2.1.18 AMI(默认)：所有切分点 PMI 均值（单点异常不主导，多字长词更稳）；
+                    2.1.18 NPMI：所有切分点归一化互信息均值 = mean_i [PMI_i/(-log2 p(词))]，
+                        罕见共现 p(词) 极小→分母 -log2 极大→凝固度被压低，但与"常见松散词"混淆会过度滤除真词；
+                    2.1.18 罕见半段惩罚(--cohesion-rare-k K>0)：每个切分点 MI 再乘 min(1, min(左频,右频)/K)，
+                        只压"有一侧是罕见字"的虚高（如 之|巅，巅仅15次→按 15/K 打折），不动 世界/修仙 等常见词；
+                        之巅 被压到闸下→滤除，我只(我/只皆常见)仍属真搭配→留待熵信号处理。
+                    len<2 或 >cohesion_max_len 为 N/A(0.0)。
         charfreq:   {char: 加权出现次数}（不含 PUNCT/SEP）
     """
     n = len(S)
@@ -284,27 +291,45 @@ def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True
         else:
             compound_ent = min(_entropy_from_vals(l_full), _entropy_from_vals(r_full))
 
-        # ---- 凝固度（cohesion）：词「内部」字间互信息，与上面「外部」邻居熵正交。
-        # 取所有切分点的最小 PMI：值越大说明内部字间绑定越强（越像一个词）；
-        # 值低/负说明两半段近似独立共现（如"之"+"巅"、"我"+"能"），更像松散搭配/词缀碎片。
-        # 例：之巅/之神/之子 内部无关联 → PMI 低；什么鬼/一人之下 强绑定 → PMI 高。
+        # ---- 凝固度（cohesion）：词「内部」字间互信息，与「外部」邻居熵正交。
+        # 2.1.18 演进路线（凝固度度量 cohesion_metric）：
+        #   pmi  : min-PMI（2.1.17 旧行为），取最弱切分点；
+        #   ami  : 所有切分点 PMI 均值（默认，单点异常不主导，多字长词更稳）；
+        #   npmi : 所有切分点归一化互信息均值 = mean[ PMI_i / (-log2 p(词)) ]（罕见共现自动压低，
+        #          但会与"常见松散词"混淆→过度滤除真词，慎用）；
+        # 罕见半段惩罚(cohesion_rare_k K>0)：每个切分点 MI 再乘 min(1, min(左频,右频)/K)，
+        #   只压"有一侧罕见字"的虚高（之|巅，巅仅15次→按 15/K 打折），不动 世界/修仙 等常见词。
+        # 值越大内部绑定越强（越像词）；值低说明两半段近似独立共现，更像松散搭配/词缀碎片。
         cohesion = 0.0   # N/A 默认（len<2 或超长词直接放行，交由熵判据）
         if len(w) >= 2 and len(w) <= cohesion_max_len and N_char > 0:
             c_w = ngram_freq.get(w, count_w)
-            coh = float('inf')
+            alpha = cohesion_smooth
+            Ns = N_char + alpha
+            cw_s = c_w + alpha
+            p_w = cw_s / Ns
+            h_w = -math.log2(p_w) if p_w > 0 and p_w <= 1 else float('inf')
+            rare_k = cohesion_rare_k
+            parts = []
             for i in range(1, len(w)):
                 left, right = w[:i], w[i:]
-                cl = ngram_freq.get(left, 0)
-                cr = ngram_freq.get(right, 0)
-                if cl > 0 and cr > 0:
-                    pmi = math.log2(c_w * N_char / (cl * cr))
-                    if pmi < coh:
-                        coh = pmi
+                cl_raw = ngram_freq.get(left, 0)
+                cr_raw = ngram_freq.get(right, 0)
+                cl = cl_raw + alpha
+                cr = cr_raw + alpha
+                pmi = math.log2(cw_s * Ns / (cl * cr))
+                if cohesion_metric == 'npmi':
+                    mi = pmi / h_w if h_w > 0 else 0.0   # NPMI ∈ [-1, 1]
                 else:
-                    coh = float('-inf')   # 半段缺失（理论上不会发生）→ 视为不凝固
-                    break
-            if coh != float('inf'):
-                cohesion = coh
+                    mi = pmi
+                if rare_k > 0:
+                    halfmin = min(cl_raw, cr_raw)        # 用原始频次判罕见（不含 α）
+                    mi *= min(1.0, halfmin / rare_k)     # 罕见半段打折
+                parts.append(mi)
+            if parts:
+                if cohesion_metric == 'pmi':
+                    cohesion = min(parts)          # 最弱切分点
+                else:
+                    cohesion = sum(parts) / len(parts)   # ami / npmi：均值
 
         if len(w) >= 2 and independent >= 1:
             candidates.append((w, count_w, independent, binding, compound_ent, cohesion))
@@ -401,12 +426,14 @@ def detect_header(row, title_col, intro_col):
 
 
 # ---------------------------------------------------------------- 管线
-def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0, no_cloud=False, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True, min_cohesion=0.0):
+def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0, no_cloud=False, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True, min_cohesion=0.0, cohesion_metric='ami', cohesion_smooth=1.0, cohesion_rare_k=0.0):
     S, wgt = build_corpus(docs)
     if not S:
         return
     print(f'[{prefix}] 语料字符数(去重后): {len(S)}  run数: {S.count(SEP)+1 if S else 0}', file=sys.stderr)
-    candidates, charfreq = scan_and_grow(S, wgt, ent_merge_ratio, ent_punct_exempt)
+    candidates, charfreq = scan_and_grow(S, wgt, ent_merge_ratio, ent_punct_exempt,
+                                         cohesion_metric=cohesion_metric, cohesion_smooth=cohesion_smooth,
+                                         cohesion_rare_k=cohesion_rare_k)
     # 前后集中度闸门（bind）：binding > 阈值的词视为寄生词剔除；默认 1.0 = 不过滤（基线）
     if bind_thresh < 1.0:
         candidates = [c for c in candidates if c[3] <= bind_thresh]
@@ -464,7 +491,13 @@ def main():
     ap.add_argument('--ent-merge-ratio', type=float, default=ENT_MERGE_RATIO,
                     help='合并触发比：两侧都有汉字邻居时，少侧不空次数/多侧不空次数 低于此值（默认 0.25，不空=汉字邻居次数+PUNCT次数）→ 两侧邻居分布合并算总熵；否则用 min(左熵,右熵)')
     ap.add_argument('--cohesion', type=float, default=0.0,
-                    help='凝固度(PMI)闸门阈值（0=关闭）：候选词内部字间互信息最小值 >= 阈值才保留，否则视为松散搭配/词缀碎片滤除（如之巅/我能）；与熵闸门取 AND。仅对 len>=2 词生效，单字/超长词直接放行')
+                    help='凝固度闸门阈值（0=关闭）：候选词内部字间互信息 >= 阈值才保留，否则视为松散搭配/词缀碎片滤除（如之巅/我能）；与熵闸门取 AND。仅对 len>=2 词生效，单字/超长词直接放行')
+    ap.add_argument('--cohesion-metric', choices=['pmi', 'ami', 'npmi'], default='pmi',
+                    help='凝固度度量：pmi=取最弱切分点(2.1.17默认且金标准最优，min-PMI@1.5→score0.946)；ami=各切分点平均互信息(多字真词被平均拉低→易误杀)；npmi=归一化互信息均值(罕见共现自动压低但混淆常见松散词→过度滤真词)；三者均未能在金标准上超越 2.1.17，故默认回退 pmi')
+    ap.add_argument('--cohesion-smooth', type=float, default=1.0,
+                    help='凝固度加性平滑 α：各 n-gram 频次 +α 后再算 MI。常见字频次>>α 不受影响')
+    ap.add_argument('--cohesion-rare-k', type=float, default=0.0,
+                    help='罕见半段惩罚 K（0=关闭）：每个切分点 MI 乘 min(1, min(左频,右频)/K)，只压"有一侧是罕见字"的虚高（如 之|巅，巅仅15次→按 15/K 打折），不动 世界/修仙 等常见词；之巅被压到闸下滤除，我只(我/只皆常见)仍属真搭配留待熵处理')
     ap.add_argument('--no-cloud', action='store_true',
                     help='跳过词云/PNG/互动HTML渲染（仅生成 CSV），用于批量调参加速')
     args = ap.parse_args()
@@ -501,8 +534,8 @@ def main():
     title_raw = [t for t, i, w in dedup if t]
     intro_raw = [i for t, i, w in dedup if i]
 
-    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, min_cohesion=args.cohesion)
-    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, min_cohesion=args.cohesion)
+    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, min_cohesion=args.cohesion, cohesion_metric=args.cohesion_metric, cohesion_smooth=args.cohesion_smooth, cohesion_rare_k=args.cohesion_rare_k)
+    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, min_cohesion=args.cohesion, cohesion_metric=args.cohesion_metric, cohesion_smooth=args.cohesion_smooth, cohesion_rare_k=args.cohesion_rare_k)
     print(f'完成，输出目录: {args.out}')
 
 
