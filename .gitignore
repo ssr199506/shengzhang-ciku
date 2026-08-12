@@ -4,3 +4,4 @@
 out/
 out_real/
 __pycache__/
+*wordcloud*
