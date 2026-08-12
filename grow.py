@@ -317,7 +317,7 @@ def detect_header(row, title_col, intro_col):
 
 
 # ---------------------------------------------------------------- 管线
-def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0):
+def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0, no_cloud=False):
     S, wgt = build_corpus(docs)
     if not S:
         return
@@ -334,17 +334,19 @@ def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, s
     print(f'[{prefix}] 候选词: {len(candidates)}  去重字符: {len(charfreq)}', file=sys.stderr)
     write_word_csv(os.path.join(out_dir, f'{prefix}_wordfreq.csv'), candidates)
     write_char_csv(os.path.join(out_dir, f'{prefix}_charfreq.csv'), charfreq)
-    try:
-        layout = render_cloud(os.path.join(out_dir, f'{prefix}_wordcloud.png'),
-                              candidates, top_n, maxlen, font_path)
-    except Exception as e:
-        print(f'[{prefix}] 词云渲染跳过: {e}', file=sys.stderr)
-        layout = None
-    # 互动词云（插入模块，独立生成 json + html；失败不影响上面的核心产物）
-    try:
-        emit_interactive(prefix, out_dir, candidates, raw_texts, top_n, maxlen, layout, standalone=standalone)
-    except Exception as e:
-        print(f'[{prefix}] 互动词云生成跳过: {e}', file=sys.stderr)
+    layout = None
+    if not no_cloud:
+        try:
+            layout = render_cloud(os.path.join(out_dir, f'{prefix}_wordcloud.png'),
+                                  candidates, top_n, maxlen, font_path)
+        except Exception as e:
+            print(f'[{prefix}] 词云渲染跳过: {e}', file=sys.stderr)
+            layout = None
+        # 互动词云（插入模块，独立生成 json + html；失败不影响上面的核心产物）
+        try:
+            emit_interactive(prefix, out_dir, candidates, raw_texts, top_n, maxlen, layout, standalone=standalone)
+        except Exception as e:
+            print(f'[{prefix}] 互动词云生成跳过: {e}', file=sys.stderr)
 
 
 def main():
@@ -365,6 +367,8 @@ def main():
                     help='复合熵阈值（compound_entropy）：仅保留 >= 阈值的词；-1.0(无邻居证据)豁免；默认 0.0=不过滤（基线），推荐 0.5~1.0')
     ap.add_argument('--no-punct-ent', action='store_true',
                     help='关闭标点感知熵：非CJK不保留为哨兵（等价于 2.1.4 行为），便于与标点感知版对照调参')
+    ap.add_argument('--no-cloud', action='store_true',
+                    help='跳过词云/PNG/互动HTML渲染（仅生成 CSV），用于批量调参加速')
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -398,8 +402,8 @@ def main():
     title_raw = [t for t, i, w in dedup if t]
     intro_raw = [i for t, i, w in dedup if i]
 
-    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent)
-    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent)
+    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud)
+    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud)
     print(f'完成，输出目录: {args.out}')
 
 
