@@ -32,7 +32,8 @@ SEP = '\x00'      # 字段/run 边界（空：不参与熵、不生长）
 PUNCT = '\ue000'  # 标点哨兵：所有非 CJK 字符抽象成的同一个「特殊汉字」；参与熵计算，但不作为词生长原料、不进入候选词/词云（显示引擎不输出它）
 ENT_MERGE_RATIO = 0.25  # 复合熵「合并」触发比：两侧都有汉字邻居时，少侧不空/多侧不空 < 此值 → 合并两侧算总熵（0.20→0.25 调参优化：filt 率不变、误伤更少）
 ENT_MIN_DATA = 3        # 只用单侧算熵时，该侧不空次数 < 此值 → 数据不足，不足以为据 → 豁免保留
-MIN_SUPER_CNT = 2       # 超词位置熵(SPE)：仅统计语料频次>=此值的超词，过滤极少量噪声超词，避免偶发超词误判为"词缀碎片"
+POS_FIXED_THRESHOLD = 0.80  # 位置固定度豁免阈值：某侧"无真实汉字邻居"的出现占比（空+符号）/该词总次数 >= 此值，
+                            # 说明该侧低熵只是位置假象（句首/句末），不作为依附证据 —— 改侧不计入 min/合并 判据，只看另一侧。
 CJK_RE = re.compile(r'[\u4e00-\u9fff]+')
 
 
@@ -77,7 +78,7 @@ def _wsum(pos_list, wgt):
     return sum(wgt[p] for p in pos_list)
 
 
-def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True, min_super_cnt=MIN_SUPER_CNT):
+def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True, pos_fixed_thr=POS_FIXED_THRESHOLD):
     """核心：单字种子 → 跳跃式 BFS 枚举最大重复 → 独立出现次数判据。
 
     标点哨兵 PUNCT 在 S 中作为邻居参与熵计算，但对生长/独立判定当墙（与 SEP 同视），
@@ -231,7 +232,25 @@ def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True
         r_full = r_cjk + ([r_punct] if r_punct > 0 else [])     # 右邻居分布（含PUNCT）
         l_non = l_han + l_punct      # 左不空次数（去掉开头/结尾空之后）
         r_non = r_han + r_punct      # 右不空次数
-        if l_han == 0 and r_han == 0:
+        l_empty = count_w - l_han - l_punct   # 左邻为空的累计次数
+        r_empty = count_w - r_han - r_punct   # 右邻为空的累计次数
+        # 位置固定度：某侧"无真实汉字邻居"的出现占比 = (空+符号)/次数。
+        # 占比高 ⇒ 该侧低熵只是位置假象（句首/句末），不作为依附证据。
+        # pos_fixed_thr <= 0 表示关闭该豁免（默认 0.85；设 0 不等同"全部固定"，而是"全部不参与"）。
+        if pos_fixed_thr > 0 and count_w:
+            l_fixed = (l_empty + l_punct) / count_w >= pos_fixed_thr
+            r_fixed = (r_empty + r_punct) / count_w >= pos_fixed_thr
+        else:
+            l_fixed = r_fixed = False
+        if l_fixed and r_fixed:
+            compound_ent = -1.0   # 两侧都位置固定 → 多半是独立成段的整词（书名等）→ 豁免
+        elif l_fixed:
+            # 左固定 → 只看右熵（沿用单侧逻辑：右侧不空数据不足则豁免）
+            compound_ent = -1.0 if (r_han == 0 or r_non < ENT_MIN_DATA) else _entropy_from_vals(r_full)
+        elif r_fixed:
+            # 右固定 → 只看左熵
+            compound_ent = -1.0 if (l_han == 0 or l_non < ENT_MIN_DATA) else _entropy_from_vals(l_full)
+        elif l_han == 0 and r_han == 0:
             compound_ent = -1.0          # 两侧都无汉字邻居 → 豁免
         elif l_han == 0:
             # 忽略左侧，只用右侧；但右侧不空数据 < ENT_MIN_DATA（太少，不足为据）→ 豁免
@@ -254,38 +273,6 @@ def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True
                     seen.add(wc)
                     queue.append((wc, pl))
 
-    # ---- 超词位置熵 SPE（2.1.19 新增 · 第四信号：结构维度）----
-    # 建 包含关系：Super(w) = {更长候选词 s | w 是 s 的子串}。
-    # 对每个超词 s，w 在 s 中的相对位置分三类：前缀(0)/中缀(1)/后缀(2)；
-    #   按超词语料频次 count(s) 加权累加到各位置桶。位置熵 = 各位置桶权重分布的熵。
-    # 语义（与复合熵/凝固度/位置固定度三者正交，只看「在包含结构里的角色」）：
-    #   spe<0  (无合格超词)    → 多半是完整独立词（如「庆余年」没被任何人装着）→ 结构豁免(留)
-    #   spe≈0  (有超词但恒一位) → 永远焊死在同一构词位（「诸天之」恒前缀、「之魂」恒后缀）→ 词缀碎片(滤)
-    #   spe高   (有超词且多样)   → 能在不同构词位自由拼装（「首富」前缀/后缀都有）→ 真构词件(留)
-    spe_super = {}                       # w -> [前缀权, 中缀权, 后缀权]
-    cand_count = {c[0]: c[1] for c in candidates}
-    cand_set = set(cand_count)
-    for s, cnt_s in cand_count.items():
-        if cnt_s < min_super_cnt or len(s) < 3:
-            continue                     # 频次不足/太短无法容纳更长子串 → 不作超词
-        seen = set()
-        L = len(s)
-        for a in range(L):
-            for b in range(a + 2, L + 1):
-                sub = s[a:b]
-                if sub in cand_set and sub != s and sub not in seen:
-                    seen.add(sub)
-                    pos = 0 if a == 0 else (2 if b == L else 1)
-                    bucket = spe_super.setdefault(sub, [0, 0, 0])
-                    bucket[pos] += cnt_s
-    def _spe_of(word):
-        bucket = spe_super.get(word)
-        tot = (bucket[0] + bucket[1] + bucket[2]) if bucket else 0
-        if tot == 0:
-            return -1.0                  # 无合格超词 → 结构豁免
-        probs = [x / tot for x in bucket if x > 0]
-        return -sum(p * math.log2(p) for p in probs) if len(probs) > 1 else 0.0
-    candidates = [c + (_spe_of(c[0]),) for c in candidates]
     return candidates, charfreq
 
 
@@ -293,9 +280,9 @@ def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True
 def write_word_csv(path, candidates):
     with open(path, 'w', newline='', encoding='utf-8-sig') as f:
         wr = csv.writer(f)
-        wr.writerow(['word', 'count', 'independent', 'bind', 'len', 'compound_entropy', 'spe'])
-        for w, cnt, ind, bind, ent, spe in sorted(candidates, key=lambda x: (-x[1], x[0])):
-            wr.writerow([w, cnt, ind, round(bind, 4), len(w), round(ent, 4), round(spe, 4)])
+        wr.writerow(['word', 'count', 'independent', 'bind', 'len', 'compound_entropy'])
+        for w, cnt, ind, bind, ent in sorted(candidates, key=lambda x: (-x[1], x[0])):
+            wr.writerow([w, cnt, ind, round(bind, 4), len(w), round(ent, 4)])
 
 
 def write_char_csv(path, charfreq):
@@ -314,7 +301,7 @@ def render_cloud(path, candidates, top_n=200, maxlen=0, font_path=None):
     if font_path is None:
         font_path = _pick_font()
     freqs = {}
-    for w, cnt, ind, bind, ent, spe in candidates:
+    for w, cnt, ind, bind, _ in candidates:
         if maxlen and len(w) > maxlen:
             continue
         freqs[w] = cnt
@@ -370,38 +357,20 @@ def detect_header(row, title_col, intro_col):
 
 
 # ---------------------------------------------------------------- 管线
-def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0, no_cloud=False, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True, spe_rescue=0.0, spe_affix=0.0):
+def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0, no_cloud=False, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True, pos_fixed_thr=POS_FIXED_THRESHOLD):
     S, wgt = build_corpus(docs)
     if not S:
         return
     print(f'[{prefix}] 语料字符数(去重后): {len(S)}  run数: {S.count(SEP)+1 if S else 0}', file=sys.stderr)
-    candidates, charfreq = scan_and_grow(S, wgt, ent_merge_ratio, ent_punct_exempt)
+    candidates, charfreq = scan_and_grow(S, wgt, ent_merge_ratio, ent_punct_exempt, pos_fixed_thr)
     # 前后集中度闸门（bind）：binding > 阈值的词视为寄生词剔除；默认 1.0 = 不过滤（基线）
     if bind_thresh < 1.0:
         candidates = [c for c in candidates if c[3] <= bind_thresh]
     # 复合熵闸门（与 --bind 取 AND）：c[4] 为 compound_entropy；-1.0 表示无真实邻居证据，豁免
     if min_ent > 0:
         before = len(candidates)
-        kept = []
-        for c in candidates:
-            ent = c[4]
-            if ent < 0 or ent >= min_ent:
-                kept.append(c)
-            elif spe_rescue > 0:
-                # SPE 结构豁免：本应被熵滤除，但「在超词里的位置高度多样」(spe>=阈值)
-                # ⇒ 能在不同构词位自由拼装的真构词件 → 救回。
-                # 注意：spe<0(无超词) 不算豁免——无超词可能既是完整真词(庆余年)也可能是
-                # 死端碎片(之魂)，无法据此判断，故只认「位置多样」这一可靠信号。
-                if c[5] >= spe_rescue:
-                    kept.append(c)
-        candidates = kept
+        candidates = [c for c in candidates if c[4] < 0 or c[4] >= min_ent]
         print(f'[{prefix}] 熵过滤: {before} → {len(candidates)} 词 (阈值 {min_ent})', file=sys.stderr)
-    # SPE 词缀过滤（与熵取 AND）：c[5] 为超词位置熵；有超词(spe>=0)且位置熵极低(焊死单一位)
-    # → 视为词缀碎片剔除（如「诸天之/之魂」）；spe<0(无超词·完整词)不受影响。
-    if spe_affix > 0:
-        before = len(candidates)
-        candidates = [c for c in candidates if not (c[5] >= 0 and c[5] <= spe_affix)]
-        print(f'[{prefix}] SPE词缀过滤: {before} → {len(candidates)} 词 (阈值 {spe_affix})', file=sys.stderr)
     print(f'[{prefix}] 候选词: {len(candidates)}  去重字符: {len(charfreq)}', file=sys.stderr)
     write_word_csv(os.path.join(out_dir, f'{prefix}_wordfreq.csv'), candidates)
     write_char_csv(os.path.join(out_dir, f'{prefix}_charfreq.csv'), charfreq)
@@ -444,12 +413,8 @@ def main():
                     help='(2.1.10 起废弃/无实际作用) PUNCT 恒作为抽象「特定汉字」邻居参与熵分布，但不作为「是否有邻居」的判定依据——该行为不可关闭，仅保留此开关兼容旧命令')
     ap.add_argument('--ent-merge-ratio', type=float, default=ENT_MERGE_RATIO,
                     help='合并触发比：两侧都有汉字邻居时，少侧不空次数/多侧不空次数 低于此值（默认 0.25，不空=汉字邻居次数+PUNCT次数）→ 两侧邻居分布合并算总熵；否则用 min(左熵,右熵)')
-    ap.add_argument('--spe-rescue', type=float, default=0.0,
-                    help='超词位置熵(SPE)结构豁免阈值（0=关闭）：本应被熵滤除、但 SPE>=阈值 或 无超词(SPE<0) 的词，视为自由构词件/完整词救回（如「首富」前缀后缀都有、「庆余年」无超词）；2.1.19 新增第四信号')
-    ap.add_argument('--spe-affix', type=float, default=0.0,
-                    help='超词位置熵(SPE)词缀过滤阈值（0=关闭）：有超词(spe>=0)且 SPE<=阈值(位置焊死在单一构词位)的词，视为词缀碎片剔除（如「诸天之」恒前缀、「之魂」恒后缀）；2.1.19 新增第四信号')
-    ap.add_argument('--min-super-cnt', type=int, default=MIN_SUPER_CNT,
-                    help='超词位置熵：仅统计语料频次>=此值的超词（默认 2），过滤偶发超词噪声')
+    ap.add_argument('--pos-fixed', type=float, default=POS_FIXED_THRESHOLD,
+                    help='位置固定度豁免阈值（0=关闭，默认 0.80）：某侧"无汉字邻居"出现占比(空+符号)/次数 >= 阈值 → 该侧低熵视为位置假象、不计入判据，只看另一侧；两侧都固定则豁免（独立成段整词）。用于救回句首/句末被误杀的自由词。扫描显示 0.80 为甜点（0.85 少救10个真实词、0.95 漏救人在斗罗）')
     ap.add_argument('--no-cloud', action='store_true',
                     help='跳过词云/PNG/互动HTML渲染（仅生成 CSV），用于批量调参加速')
     args = ap.parse_args()
@@ -486,8 +451,8 @@ def main():
     title_raw = [t for t, i, w in dedup if t]
     intro_raw = [i for t, i, w in dedup if i]
 
-    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, spe_rescue=args.spe_rescue, spe_affix=args.spe_affix)
-    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, spe_rescue=args.spe_rescue, spe_affix=args.spe_affix)
+    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, pos_fixed_thr=args.pos_fixed)
+    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, pos_fixed_thr=args.pos_fixed)
     print(f'完成，输出目录: {args.out}')
 
 
