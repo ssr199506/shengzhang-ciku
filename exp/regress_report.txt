@@ -1,0 +1,28 @@
+================================================================
+3.0-unified 回归矩阵
+================================================================
+
+[1/3] 金标准 sha256 完整性
+  [PASS] sha v211_raw_7150.csv
+  [PASS] sha v211_ent_5865.csv
+  [PASS] sha v217_cohesion_5156.csv
+  [PASS] sha v233_indep_5149.csv
+  [PASS] sha v241_spe_5895.csv
+  [PASS] sha v242_rsr_5889.csv
+
+[2/3] golden 配置矩阵（grow3 vs exp/golden）
+  [PASS] raw: grow3=7150 golden=7150 完全一致
+  [PASS] ent: grow3=5865 golden=5865 完全一致
+  [PASS] cohesion: grow3=5156 golden=5156 完全一致
+  [PASS] indep: grow3=5149 golden=5149 完全一致
+  [PASS] spe: grow3=5895 golden=5895 完全一致
+  [PASS] rsr: grow3=5889 golden=5889 完全一致
+
+[3/3] verify_grow3 扫描逻辑 60 组对拍
+  grow3 全部通过：60 组随机语料，共校验 781 个词次
+  说明：加权与等权结果一致 => 判据对权重不变（只影响频数数值）
+
+================================================================
+汇总: golden 6/6  sha 6/6  scan_verify PASS
+结果: ALL PASS ✅
+================================================================
