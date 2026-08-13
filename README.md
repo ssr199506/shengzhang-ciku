@@ -113,6 +113,11 @@ class Word:
   `rsr_rescue` 与 `spe` 取 **AND**（非并列），补集泛用度高才留。
 - SPE/RSR 的 `spe<0`/`rsr<0`（无合格超词）视为结构豁免，**不**参与救援（无法判位置多样）。
 
+> **未移植（明确弃用）**：2.4.1/2.4.2 的 `spe_affix` / `rsr_affix` **词缀过滤门**——
+> 历史上均因灾难性误杀被弃用（spe_affix=0.4 砍 1417 词含 大佬/网游/法师 等真标题词；
+> rsr_affix=2 误杀 32 个真词）。grow3 只保留其正向成果（救援门 + RSR 辅助列），
+> 不再暴露两个已证失败的过滤开关。
+
 ---
 
 ## 三、废弃实验（记录在案）
@@ -157,25 +162,32 @@ v1        独立出现次数判据（基础）
 
 ## 六、使用
 
+> **语料版权**：输入语料 `corpus.csv` 为付费商用数据，**不入库**，需自备并命名为
+> `corpus.csv` 置于仓库根（.gitignore 已锁死）。本仓库只含统计词表/代码，不含语料原文；
+> 运行产生的词云产物含从书名提取的完整标题，同样**严禁入库**（.gitignore 已双重防护）。
+
 ```bash
-# 与 2.1.11 等价（默认 → 5865）
-python -m grow3.cli 语料.csv --title-col 2 --intro-col -1 --ent-merge-ratio 0.25 --no-cloud
+# 与 2.1.11 等价（默认 → 5865；默认渲染词云，--no-cloud 关闭）
+python -m grow3.cli corpus.csv --title-col 2 --intro-col -1 --ent-merge-ratio 0.25 --no-cloud
 
 # 等价 2.3.3（→ 5149）
-python -m grow3.cli 语料.csv --title-col 2 --intro-col -1 --ent-merge-ratio 0.25 \
+python -m grow3.cli corpus.csv --title-col 2 --intro-col -1 --ent-merge-ratio 0.25 \
     --no-cloud --min-ent 0.5 --cohesion 1.5 --indep 0.05
 
 # 等价 2.4.2（→ 5889）
-python -m grow3.cli 语料.csv --title-col 2 --intro-col -1 --ent-merge-ratio 0.25 \
+python -m grow3.cli corpus.csv --title-col 2 --intro-col -1 --ent-merge-ratio 0.25 \
     --no-cloud --min-ent 0.5 --spe-rescue 0.8 --rsr-rescue 8 --rsr-mode mean
 
+# 渲染词云 + 互动词云（默认行为；--top/--maxlen 控制词数与词长过滤）
+python -m grow3.cli corpus.csv --title-col 2 --intro-col -1 --out out
+
 # 审计：输出每级闸门进/出 + 差集清单 JSON
-python -m grow3.cli 语料.csv ... --audit out.json
+python -m grow3.cli corpus.csv ... --audit out.json
 ```
 
 参数（与历史 CLI 对齐）：`--min-ent / --cohesion / --indep / --spe-rescue /
 --rsr-rescue / --rsr-mode / --min-super-cnt / --ent-merge-ratio / --title-col /
---intro-col / --no-cloud / --audit`。
+--intro-col / --no-cloud / --top / --maxlen / --audit`。
 
 ---
 
