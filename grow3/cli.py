@@ -76,7 +76,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--bind", type=float, default=1.0, help="前后集中度闸门（默认 1.0=关）")
     ap.add_argument("--no-punct-ent", action="store_true", help="关闭标点感知熵")
     ap.add_argument("--no-merge", action="store_true", help="关闭合并模式（ratio=0）")
-    ap.add_argument("--no-cloud", action="store_true", default=True)
+    ap.add_argument("--no-cloud", action="store_true", default=False,
+                    help="跳过词云渲染（默认渲染，与历史 main 对齐；词云产物含书名，请勿入库）")
+    ap.add_argument("--top", type=int, default=200, help="词云词数上限")
+    ap.add_argument("--maxlen", type=int, default=0, help="词云最大词长过滤（0=不限）")
     ap.add_argument("--audit", default=None, help="审计日志输出路径")
     return ap
 
@@ -115,6 +118,22 @@ def run_pipeline(prefix, docs, raw_texts, cfg, out_dir, audit=None):
     if audit is not None:
         audit.final_count = len(kept)
     write_word_csv(kept, os.path.join(out_dir, f'{prefix}_wordfreq.csv'))
+
+    # ---- 词云渲染（显示层，失败不致命；产物含完整书名，.gitignore 已锁死防入库）----
+    if not cfg.no_cloud:
+        top_n = cfg.top_n or 200
+        try:
+            from .cloud import emit_interactive, render_cloud
+            layout = render_cloud(os.path.join(out_dir, f'{prefix}_wordcloud.png'),
+                                  kept, top_n, cfg.maxlen)
+            try:
+                emit_interactive(prefix, out_dir, kept, raw_texts, top_n,
+                                 cfg.maxlen, layout, standalone=False)
+            except Exception as e:
+                print(f'[{prefix}] 互动词云跳过: {e}', file=sys.stderr)
+        except Exception as e:
+            print(f'[{prefix}] 词云渲染跳过: {e}', file=sys.stderr)
+
     return kept
 
 
@@ -138,6 +157,8 @@ def main(argv=None) -> int:
         min_super_cnt=args.min_super_cnt,
         title_col=args.title_col,
         intro_col=args.intro_col,
+        top_n=args.top,
+        maxlen=args.maxlen,
         no_cloud=args.no_cloud,
         bind_thresh=args.bind,
     )
