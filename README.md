@@ -162,6 +162,21 @@ v1        独立出现次数判据（基础）
 
 ## 六、使用
 
+### 配置驱动（推荐 · 面板调参外置）
+
+所有调参旋钮已从代码抽到 JSON 配置文件（模块化自然延伸）：
+
+```bash
+cp config.example.json config.json   # 生成本地配置（已 gitignore）
+# 编辑 config.json 填参数 → 双击 run.bat 即出结果；或：
+python -m grow3.cli --config config.json
+```
+
+- **优先级**：CLI 显式参数 > 配置文件 > 内置默认（例：`--config config.json --spe-rescue 0.8` 覆盖配置的 0.0）。
+- **`input`/`out`/`audit`** 也可写在配置里（双击零命令行）；配置键写错会直接报错提示合法键。
+- 配置模板默认填「最干净」推荐组合（coh1.5+indep0.05）；`_说明` 字段是给人类看的注释。
+- 回归/调参脚本不带 `--config` 运行，不受本地配置文件影响。
+
 > **语料版权**：输入语料 `corpus.csv` 为付费商用数据，**不入库**，需自备并命名为
 > `corpus.csv` 置于仓库根（.gitignore 已锁死）。本仓库只含统计词表/代码，不含语料原文；
 > 运行产生的词云产物含从书名提取的完整标题，同样**严禁入库**（.gitignore 已双重防护）。
