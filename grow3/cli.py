@@ -80,6 +80,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="跳过词云渲染（默认渲染，与历史 main 对齐；词云产物含书名，请勿入库）")
     ap.add_argument("--top", type=int, default=200, help="词云词数上限")
     ap.add_argument("--maxlen", type=int, default=0, help="词云最大词长过滤（0=不限）")
+    ap.add_argument("--standalone", action="store_true",
+                    help="互动词云生成单文件内联 HTML（双击即开，无需外部 data.js；默认外壳 HTML + data.js）")
     ap.add_argument("--audit", default=None, help="审计日志输出路径")
     return ap
 
@@ -128,7 +130,7 @@ def run_pipeline(prefix, docs, raw_texts, cfg, out_dir, audit=None):
                                   kept, top_n, cfg.maxlen)
             try:
                 emit_interactive(prefix, out_dir, kept, raw_texts, top_n,
-                                 cfg.maxlen, layout, standalone=False)
+                                 cfg.maxlen, layout, standalone=cfg.standalone)
             except Exception as e:
                 print(f'[{prefix}] 互动词云跳过: {e}', file=sys.stderr)
         except Exception as e:
@@ -159,6 +161,7 @@ def main(argv=None) -> int:
         intro_col=args.intro_col,
         top_n=args.top,
         maxlen=args.maxlen,
+        standalone=args.standalone,
         no_cloud=args.no_cloud,
         bind_thresh=args.bind,
     )
