@@ -156,7 +156,8 @@ v1        独立出现次数判据（基础）
 - **多了模块化**：扫描一次 → IR → 信号只读加列 → 闸门组装 → 审计；新信号即插即用。
 - **根入口兼容层**：`grow.py` 是 `grow3` 的薄封装，`verify.py`/`tune_bind.py`/`probe_words.py`
   等历史工具无需改动即可运行在 grow3 上（已由暴力对拍验证）。
-- **接棒 main**：Step 9 后 `3.0-unified` 与 main 行为等价，可随时 merge 到 main。
+- **已接棒 main**：`3.0-unified` 已于 2026-08-13 fast-forward 合并进 main，成为 main 的后续
+  （`3.0-unified` 分支保留作标记）。后续开发直接在 main 上进行。
 
 ---
 
