@@ -1,5 +1,4 @@
 {
-  "_说明": "生长词库 3.0 配置文件模板。复制为 config.json 后修改参数，双击 run.bat 运行（无需命令行参数）。参数含义：input=语料CSV（付费数据请自备）；min_ent=复合熵阈值；min_cohesion=凝固度阈值；min_indep=词本身偏序阈值；spe_rescue/rsr_rescue=救援门阈值(0=关)；no_cloud=true 跳过词云(词云产物含书名勿外传)；standalone=true 互动词云单文件。已填『最干净』推荐组合：coh1.5+indep0.05（见 README ★面板最强组合）。",
   "input": "corpus.csv",
   "out": "out",
   "audit": "out/audit.json",

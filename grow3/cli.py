@@ -237,6 +237,9 @@ def main(argv=None) -> int:
         run_pipeline('intro', intro_docs, intro_raw, cfg, out_dir)
 
     if audit_path:
+        adir = os.path.dirname(audit_path)
+        if adir:
+            os.makedirs(adir, exist_ok=True)
         audit.dump(audit_path)
         print(f'[grow3] 审计日志已写出: {audit_path}', file=sys.stderr)
         # 链路摘要：候选N → 各门 → 最终E

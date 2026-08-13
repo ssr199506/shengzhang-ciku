@@ -1,0 +1,63 @@
+生长词库 3.0 — 配置文件说明
+=============================
+
+一、怎么用
+---------
+1) 复制 config.example.json 为 config.json；
+2) 用记事本改 config.json 里的参数；
+3) 双击 run.bat 运行（或命令行：python -m grow3.cli --config config.json）。
+输出在 out/ 目录：title_wordfreq.csv（词表）、title_wordcloud.html（词云）、
+audit.json（每级闸门审计）。
+
+注意：input 是付费商用语料（需自备，.gitignore 已锁死不入库）；词云产物含
+从书名提取的完整标题，请勿外传/入库。
+
+二、参数说明（全部可选；不填则用内置默认）
+------------------------------------------
+
+【输入输出】
+  input         语料 CSV 路径（默认 corpus.csv）
+  out           输出目录（默认 out）
+  audit         审计日志 JSON 路径（留空/删除则不输出审计）
+
+【扫描 / 清洗】
+  title_col     书名列号（0 起）——语料第 3 列填 2
+  intro_col     简介列号（0 起，-1=无简介）
+  ent_merge_ratio  复合熵合并触发比（默认 0.25，历史定档）
+  no_punct_ent  是否关闭标点感知熵（true=标点不算邻居）
+  no_merge      是否关闭合并模式（true=恒用 min(左熵,右熵)）
+
+【过滤门（AND 链，阈值 <=0 表示关该门）】
+  min_ent       复合熵阈值（默认 0.5）——无真实邻居证据的词豁免保留
+  min_cohesion  凝固度 PMI 阈值（默认关；推荐 1.5）——清松散搭配碎片
+  min_indep     词本身偏序阈值（默认关；推荐 0.05）——清强搭配碎片（我只/聊天）
+
+【救援门（条件，从被滤集捞回）】
+  spe_rescue    SPE 超词位置熵救援阈值（默认关；0.8=救回死在熵门的真词，
+                但会混入碎片——真词碎片 spe 值重叠切不开，见 README）
+  rsr_rescue    RSR 补集偏序救援阈值（默认关；与 spe 取 AND 收紧）
+  rsr_mode      RSR 聚合：mean / max（默认 mean）
+  min_super_cnt 超词最小出现次数（SPE/RSR 遍历门槛，默认 2）
+
+【词云】
+  no_cloud      是否跳过词云渲染（默认 true=跳过；false=渲染）
+  standalone    true=单文件内联 HTML（HTML 自包含、双击即开，体积大）
+                false=外壳 HTML + 外部 data.js（HTML 恒定 7.9K、数据分离，
+                需与 data.js 同目录，main 的做法，推荐）
+  top_n         词云词数上限（默认 200）
+  maxlen        词云最大词长过滤（0=不限）
+
+【其他】
+  bind_thresh   前后集中度闸门（>=1.0 表示关闭；默认 1.0）
+
+三、配置优先级
+-------------
+命令行显式参数 > 配置文件 > 内置默认。
+例：python -m grow3.cli --config config.json --spe-rescue 0.8
+    —— 命令行覆盖配置里的 spe_rescue。
+
+四、推荐组合（2026-08-13 联合调参）
+----------------------------------
+【最干净 / 金标准口径最优】min_ent 0.5 + cohesion 1.5 + indep 0.05 → 5149 词
+【需救回熵门真词】再加 spe_rescue 0.8 → 5232 词（混入部分碎片）
+（详见 README ★面板最强组合；脚本 exp/tune_combo.py 可复现 63 组合网格）
