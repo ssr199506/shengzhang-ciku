@@ -30,6 +30,8 @@ from .signals.cohesion import cal_cohesion
 from .signals.indep import cal_indep
 from .signals.spe_rsr import cal_spe_rsr
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 仓库根（默认 config.json 所在）
+
 
 def load_csv(path, has_header):
     """读取 CSV，返回 [(title, intro), ...]。与 main 行为一致。"""
@@ -59,31 +61,64 @@ def detect_header(row, title_col, intro_col):
 
 def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="grow3", description="生长词库 3.0 统一管道")
-    ap.add_argument("input", help="输入 CSV（title,intro）")
-    ap.add_argument("--out", default=".", help="输出目录")
-    ap.add_argument("--min-ent", type=float, default=0.5, help="复合熵阈值")
-    ap.add_argument("--cohesion", type=float, default=0.0, help="凝固度阈值")
-    ap.add_argument("--indep", type=float, default=0.0, help="词本身偏序阈值")
-    ap.add_argument("--spe-rescue", type=float, default=0.0, help="SPE 救援阈值")
-    ap.add_argument("--rsr-rescue", type=float, default=0.0, help="RSR 救援阈值")
-    ap.add_argument("--rsr-mode", choices=["mean", "max"], default="mean")
-    ap.add_argument("--min-super-cnt", type=int, default=2, help="超词最小出现次数（SPE/RSR 遍历门槛，默认 2）")
-    ap.add_argument("--ent-merge-ratio", type=float, default=0.25)
-    ap.add_argument("--title-col", type=int, default=0)
-    ap.add_argument("--intro-col", type=int, default=1)
-    ap.add_argument("--no-header", action="store_true")
-    ap.add_argument("--no-dedup", action="store_true")
-    ap.add_argument("--bind", type=float, default=1.0, help="前后集中度闸门（默认 1.0=关）")
-    ap.add_argument("--no-punct-ent", action="store_true", help="关闭标点感知熵")
-    ap.add_argument("--no-merge", action="store_true", help="关闭合并模式（ratio=0）")
-    ap.add_argument("--no-cloud", action="store_true", default=False,
-                    help="跳过词云渲染（默认渲染，与历史 main 对齐；词云产物含书名，请勿入库）")
-    ap.add_argument("--top", type=int, default=200, help="词云词数上限")
-    ap.add_argument("--maxlen", type=int, default=0, help="词云最大词长过滤（0=不限）")
-    ap.add_argument("--standalone", action="store_true",
-                    help="互动词云生成单文件内联 HTML（双击即开，无需外部 data.js；默认外壳 HTML + data.js）")
+    ap.add_argument("input", nargs="?", default=None,
+                    help="输入 CSV（title,intro）；缺省时从配置文件 input 读取")
+    ap.add_argument("--config", default=None, help="配置文件路径（JSON）；缺省时自动读仓库根 config.json")
+    ap.add_argument("--out", default=None, help="输出目录")
+    ap.add_argument("--min-ent", type=float, default=None, help="复合熵阈值")
+    ap.add_argument("--cohesion", type=float, default=None, help="凝固度阈值")
+    ap.add_argument("--indep", type=float, default=None, help="词本身偏序阈值")
+    ap.add_argument("--spe-rescue", type=float, default=None, help="SPE 救援阈值")
+    ap.add_argument("--rsr-rescue", type=float, default=None, help="RSR 救援阈值")
+    ap.add_argument("--rsr-mode", choices=["mean", "max"], default=None)
+    ap.add_argument("--min-super-cnt", type=int, default=None, help="超词最小出现次数（SPE/RSR 遍历门槛）")
+    ap.add_argument("--ent-merge-ratio", type=float, default=None)
+    ap.add_argument("--title-col", type=int, default=None)
+    ap.add_argument("--intro-col", type=int, default=None)
+    ap.add_argument("--no-header", action="store_true", default=None)
+    ap.add_argument("--no-dedup", action="store_true", default=None)
+    ap.add_argument("--bind", type=float, default=None, help="前后集中度闸门（默认 1.0=关）")
+    ap.add_argument("--no-punct-ent", action="store_true", default=None, help="关闭标点感知熵")
+    ap.add_argument("--no-merge", action="store_true", default=None, help="关闭合并模式（ratio=0）")
+    ap.add_argument("--no-cloud", action="store_true", default=None,
+                    help="跳过词云渲染（默认渲染；词云产物含书名，请勿入库）")
+    ap.add_argument("--top", type=int, default=None, help="词云词数上限")
+    ap.add_argument("--maxlen", type=int, default=None, help="词云最大词长过滤（0=不限）")
+    ap.add_argument("--standalone", action="store_true", default=None,
+                    help="互动词云单文件内联 HTML（无需外部 data.js）")
     ap.add_argument("--audit", default=None, help="审计日志输出路径")
     return ap
+
+
+# argparse dest -> PipelineConfig 字段名（CLI 参数覆盖配置文件的映射）
+_ARG_TO_CFG = {
+    "min_ent": "min_ent",
+    "cohesion": "min_cohesion",
+    "indep": "min_indep",
+    "spe_rescue": "spe_rescue",
+    "rsr_rescue": "rsr_rescue",
+    "rsr_mode": "rsr_mode",
+    "min_super_cnt": "min_super_cnt",
+    "ent_merge_ratio": "ent_merge_ratio",
+    "title_col": "title_col",
+    "intro_col": "intro_col",
+    "bind": "bind_thresh",
+    "no_punct_ent": "no_punct_ent",
+    "no_merge": "no_merge",
+    "no_cloud": "no_cloud",
+    "top": "top_n",
+    "maxlen": "maxlen",
+    "standalone": "standalone",
+}
+# cli 级键：不进 PipelineConfig，由 main 单独处理
+_CLI_KEYS = {"input", "out", "audit", "no_header", "no_dedup"}
+
+
+def load_json_config(path):
+    """读取 JSON 配置文件为 dict。"""
+    import json
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 
 def run_pipeline(prefix, docs, raw_texts, cfg, out_dir, audit=None):
@@ -91,8 +126,8 @@ def run_pipeline(prefix, docs, raw_texts, cfg, out_dir, audit=None):
 
     audit 非空时记录每级闸门进/出/差集（Step 7 审计探针）。
     """
-    use_punct = not cfg.no_punct_ent if hasattr(cfg, 'no_punct_ent') else True
-    ent_merge_ratio = 0.0 if getattr(cfg, 'no_merge', False) else cfg.ent_merge_ratio
+    use_punct = not cfg.no_punct_ent
+    ent_merge_ratio = 0.0 if cfg.no_merge else cfg.ent_merge_ratio
     S, wgt = build_corpus([(clean(t, use_punct), w) for t, w in docs])
     if not S:
         return []
@@ -148,42 +183,45 @@ def main(argv=None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
 
-    cfg = PipelineConfig(
-        ent_merge_ratio=args.ent_merge_ratio,
-        min_ent=args.min_ent,
-        min_cohesion=args.cohesion,
-        min_indep=args.indep,
-        spe_rescue=args.spe_rescue,
-        rsr_rescue=args.rsr_rescue,
-        rsr_mode=args.rsr_mode,
-        min_super_cnt=args.min_super_cnt,
-        title_col=args.title_col,
-        intro_col=args.intro_col,
-        top_n=args.top,
-        maxlen=args.maxlen,
-        standalone=args.standalone,
-        no_cloud=args.no_cloud,
-        bind_thresh=args.bind,
-    )
-    # 兼容未列出的开关
-    cfg.no_punct_ent = args.no_punct_ent
-    cfg.no_merge = args.no_merge
+    # ---- 配置合并：CLI 显式参数 > 配置文件(--config) > PipelineConfig 默认 ----
+    # 注意：不自动读 config.json——避免污染精确控制 CLI 的回归/调参脚本；
+    # 双击场景由 run.bat 显式传 --config config.json。
+    cfg_path = args.config
+    cfg_map = load_json_config(cfg_path) if cfg_path else {}
+    for dest, key in _ARG_TO_CFG.items():
+        val = getattr(args, dest)
+        if val is not None:
+            cfg_map[key] = val
+    # cli 级键（不进 PipelineConfig）：先全部 pop 出，再与 CLI 参数合并
+    cfg_input = cfg_map.pop("input", None)
+    cfg_out = cfg_map.pop("out", None)
+    cfg_audit = cfg_map.pop("audit", None)
+    cfg_no_header = cfg_map.pop("no_header", False)
+    cfg_no_dedup = cfg_map.pop("no_dedup", False)
+    input_path = args.input or cfg_input
+    out_dir = args.out or cfg_out or "."
+    audit_path = args.audit or cfg_audit
+    no_header = bool(cfg_no_header)
+    no_dedup = bool(cfg_no_dedup)
+    if not input_path:
+        parser.error("未指定输入 CSV：请提供位置参数，或配置文件 input 字段")
+    cfg = PipelineConfig.from_dict(cfg_map)
 
-    os.makedirs(args.out, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
 
-    with open(args.input, 'r', encoding='utf-8-sig', newline='') as f:
+    with open(input_path, 'r', encoding='utf-8-sig', newline='') as f:
         reader = csv.reader(f)
         raw_rows = []
         for i, r in enumerate(reader):
             if not r:
                 continue
-            if i == 0 and not args.no_header and detect_header(r, args.title_col, args.intro_col):
+            if i == 0 and not no_header and detect_header(r, cfg.title_col, cfg.intro_col):
                 continue
-            title = r[args.title_col].strip() if 0 <= args.title_col < len(r) else ''
-            intro = r[args.intro_col].strip() if 0 <= args.intro_col < len(r) else ''
+            title = r[cfg.title_col].strip() if 0 <= cfg.title_col < len(r) else ''
+            intro = r[cfg.intro_col].strip() if 0 <= cfg.intro_col < len(r) else ''
             raw_rows.append((title, intro))
 
-    if args.no_dedup:
+    if no_dedup:
         dedup = [(t, i, 1) for t, i in raw_rows]
     else:
         dedup = [(t, i, w) for (t, i), w in Counter(raw_rows).items()]
@@ -193,14 +231,14 @@ def main(argv=None) -> int:
     title_raw = [t for t, i, w in dedup if t]
     intro_raw = [i for t, i, w in dedup if i]
 
-    audit = AuditLog() if args.audit else None
-    kt = run_pipeline('title', title_docs, title_raw, cfg, args.out, audit)
-    if args.intro_col >= 0 and intro_docs:
-        run_pipeline('intro', intro_docs, intro_raw, cfg, args.out)
+    audit = AuditLog() if audit_path else None
+    kt = run_pipeline('title', title_docs, title_raw, cfg, out_dir, audit)
+    if cfg.intro_col >= 0 and intro_docs:
+        run_pipeline('intro', intro_docs, intro_raw, cfg, out_dir)
 
-    if args.audit:
-        audit.dump(args.audit)
-        print(f'[grow3] 审计日志已写出: {args.audit}', file=sys.stderr)
+    if audit_path:
+        audit.dump(audit_path)
+        print(f'[grow3] 审计日志已写出: {audit_path}', file=sys.stderr)
         # 链路摘要：候选N → 各门 → 最终E
         chain = [f"候选{audit.stages[0].before}"]
         for s in audit.stages[1:]:

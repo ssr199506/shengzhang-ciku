@@ -18,3 +18,6 @@ __pycache__/
 # 付费商用语料（含版权），严禁入库
 PAID_CORPUS.csv
 corpus.csv
+# 本地配置文件（含语料路径等个人设置，勿入库；模板见 config.example.json）
+config.json
+out*/

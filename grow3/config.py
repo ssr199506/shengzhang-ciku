@@ -20,6 +20,8 @@ class PipelineConfig:
     # ---- 扫描 / 清洗 ----
     ent_merge_ratio: float = 0.25     # 合并触发比（苟在阈值边缘的寄生对也合并救回）
     ent_punct_exempt: bool = True     # 符号邻居豁免（PUNCT' 特殊汉字邻居参与熵但不作邻居判定）
+    no_punct_ent: bool = False        # 关闭标点感知熵（非 CJK 不保留为哨兵）
+    no_merge: bool = False            # 关闭合并模式（ratio=0，恒用 min(左熵,右熵)）
 
     # ---- 过滤门（AND 链）----
     min_ent: float = 0.5              # 复合熵阈值；<=0 表示关闭该门
@@ -69,4 +71,22 @@ class PipelineConfig:
             "min_super_cnt": self.min_super_cnt,
             "cohesion_max_len": self.cohesion_max_len,
             "bind_thresh": self.bind_thresh,
+            "no_punct_ent": self.no_punct_ent,
+            "no_merge": self.no_merge,
         }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PipelineConfig":
+        """从配置 dict 构造（JSON 配置文件入口）。
+
+        只接受 dataclass 已声明的字段；未知键（拼写错误/多余键）直接报错，
+        方便配置文件调试。注意 cli 级键（input/out/audit/no_header/no_dedup）
+        不在此列，由 cli 先剥离再调用本方法。
+        """
+        known = {f for f in cls.__dataclass_fields__}
+        unknown = {k for k in d if k not in known and not k.startswith("_")}
+        if unknown:
+            raise ValueError(
+                f"配置文件含未知参数: {sorted(unknown)}\n"
+                f"合法参数: {sorted(known)}")
+        return cls(**{k: v for k, v in d.items() if k in known})
