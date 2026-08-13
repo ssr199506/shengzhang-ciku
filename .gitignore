@@ -5,6 +5,7 @@ _regen/
 _golden_run/
 out_real/
 大样本/
+.workbuddy/
 __pycache__/
 *.pyc
 *.pyo
