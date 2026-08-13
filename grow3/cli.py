@@ -27,6 +27,7 @@ from .scan import build_corpus, clean, scan_once
 from .signals.ent import cal_ent
 from .signals.cohesion import cal_cohesion
 from .signals.indep import cal_indep
+from .signals.spe_rsr import cal_spe_rsr
 
 
 def load_csv(path, has_header):
@@ -97,6 +98,11 @@ def run_pipeline(prefix, docs, raw_texts, cfg, out_dir):
         indep_map = cal_indep(ctx)
         for wd in words:
             wd.indep = indep_map.get(wd.word, -1.0)
+    if cfg.spe_rescue > 0 or cfg.rsr_rescue > 0:
+        spe_map, rsr_map = cal_spe_rsr(ctx, cfg.min_super_cnt, cfg.rsr_mode)
+        for wd in words:
+            wd.spe = spe_map.get(wd.word, -1.0)
+            wd.rsr = rsr_map.get(wd.word, -1.0)
     kept = gate_chain(words, cfg)
     write_word_csv(kept, os.path.join(out_dir, f'{prefix}_wordfreq.csv'))
     return kept

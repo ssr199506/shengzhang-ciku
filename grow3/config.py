@@ -30,7 +30,7 @@ class PipelineConfig:
     spe_rescue: float = 0.0           # SPE 救援阈值；<=0 关闭
     rsr_rescue: float = 0.0           # RSR 救援阈值；<=0 关闭（且与 spe 取 AND）
     rsr_mode: str = "mean"            # RSR 聚合模式：mean / max
-    min_super_cnt: int = 1            # 超词最小出现次数（SPE/RSR 遍历门槛）
+    min_super_cnt: int = 2            # 超词最小出现次数（SPE/RSR 遍历门槛；等价 2.4.x MIN_SUPER_CNT=2）
 
     # ---- 凝固度边界 ----
     cohesion_max_len: int = 8         # 超过此长度的词不参与凝固度计算（N/A 放行）
