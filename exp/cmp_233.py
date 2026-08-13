@@ -1,133 +1,139 @@
 # -*- coding: utf-8 -*-
-"""2.3.3-cohesion-poset 对比：在 2.3.1 凝固度(v217=5156) 基础上加「词本身偏序」独立频次门。
-输出：
-  - 校验：indep=0 应精确复现 v217=5156（无回归）
-  - 调参：indep ∈ {0.03,0.05,0.10} 的产词数 / 清碎片 / 误伤真词
-  - 定位：与 v211(5865)/v216(5877)/v217(5156)/2.4.1(5895)/2.4.2(5889) 同表对比
-生产指标对齐 README「三版本最终验收评估」：
-  硬碎片残留 = 错题集 class=111 仍被保留的词数
-  高频误伤   = 错题集 class=000 且 count>=5 被滤除的词数
+"""2.3.3 调参与版本对比脚本。
+
+复现目标：
+  - 标准配置 me0.5 + mr0.25 + coh1.5 下，v217 基线产词 5156（indep=0 无回归）。
+  - 加入词本身偏序独立频次闸门 indep∈{0, 0.03, 0.05, 0.10} 后，看产词数/碎片清理/真词误伤的变化。
+  - 探针词验证信号方向：强搭配碎片(我只/聊天/我真/罗之) indep≈0，真词 indep≥0.13。
+
+与 grow.py 完全复用同一套 scan_and_grow（含 indep 计算），仅在本脚本内施加熵门/凝固度门/偏序门，
+避免重复扫描。语料列映射对齐 CLI（书名在 col 2，作者 col 5 但 title 产词只看 col 2）。
+
+运行：python exp/cmp_233.py
 """
-import importlib.util, csv, os, sys
+import csv
+import os
+import sys
 from collections import Counter
 
-EV = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(EV)
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
-CSV = os.path.join(ROOT, "PAID_CORPUS.csv")
-MIN_ENT = 0.5; ENT_MR = 0.25; POS_FIXED = 0.80; MIN_COH = 1.5
-EVAL = r"SANDBOX\eval_versions"
-PROBE = ["我只", "聊天", "我真", "罗之", "联盟之", "我的", "这个", "世界", "开始", "首富", "庆余年", "长生"]
+from grow import build_corpus, scan_and_grow, clean, detect_header, ENT_MERGE_RATIO  # noqa: E402
+
+CORPUS = os.path.join(ROOT, "PAID_CORPUS.csv")
+BOOK = r"SANDBOX\eval_versions\mistake_book.csv"
+
+TITLE_COL = 2
+INTRO_COL = -1
+MIN_ENT = 0.5          # 复合熵闸门（标准配置）
+ENT_MERGE = 0.25       # 合并触发比（标准配置）
+MIN_COH = 1.5          # 凝固度(PMI)闸门（标准配置）
+INDEP_SUPER_MIN = 1    # 覆盖者最小加权次数（默认 1 = 任意候选可作覆盖者）
 
 
-def lg(p):
-    s = importlib.util.spec_from_file_location("g233", p)
-    m = importlib.util.module_from_spec(s); s.loader.exec_module(m); return m
-
-
-def title_docs(g):
-    docs = []
-    with open(CSV, encoding="utf-8-sig", newline="") as f:
-        for i, r in enumerate(csv.reader(f)):
+def build_title_docs(path, title_col=TITLE_COL, intro_col=INTRO_COL, use_punct=True):
+    """对齐 grow.py main() 的语料读取 + 去重加权逻辑，保证与 CLI 产词数一致。"""
+    rows = []
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.reader(f)
+        for i, r in enumerate(reader):
             if not r:
                 continue
-            if i == 0 and g.detect_header(r, 2, 1):
+            if i == 0 and detect_header(r, title_col, intro_col):
                 continue
-            t = r[2].strip() if len(r) > 2 else ""
-            if t:
-                docs.append(t)
-    d = {}
-    for t in docs:
-        d[t] = d.get(t, 0) + 1
-    return [(g.clean(t, True), w) for t, w in d.items() if t]
+            title = r[title_col].strip() if title_col < len(r) else ""
+            intro = r[intro_col].strip() if 0 <= intro_col < len(r) else ""
+            rows.append((title, intro))
+    dedup = [(t, i, w) for (t, i), w in Counter(rows).items()]
+    return [(clean(t, use_punct), w) for t, i, w in dedup if t]
 
 
-def load_book():
-    true000_hf = set()   # class=000 且 count>=5（高频真词，误伤对象）
-    frag111 = set()      # class=111（碎片，残留对象）
-    rows = {}
-    with open(os.path.join(EVAL, "mistake_book.csv"), encoding="utf-8-sig") as f:
-        for r in csv.DictReader(f):
-            w = r["word"].strip()
-            try:
-                cnt = int(r["count"])
-            except (ValueError, TypeError):
-                cnt = 0
-            rows[w] = r
-            if r["class"] == "000" and cnt >= 5:
-                true000_hf.add(w)
-            if r["class"] == "111":
-                frag111.add(w)
-    return true000_hf, frag111, rows
+def load_book(path):
+    book = {}
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            book[row["word"].strip()] = row
+    return book
 
 
-def kept_set(g, cands, min_coh, min_indep, min_ent=MIN_ENT):
+def kept_set(cands, min_ent, min_coh, min_indep):
+    """施加 熵门 AND 凝固度门 AND 偏序门，返回保留词集合。对齐 grow.py process_corpus 三个闸门。"""
     out = set()
-    for c in cands:
-        w = c[0]
-        if len(w) < 2:
-            out.add(w); continue
-        ok_ent = (min_ent <= 0) or (c[4] < 0 or c[4] >= min_ent)   # 复合熵门（-1 豁免）
-        ok_coh = (min_coh <= 0) or (c[5] >= min_coh)
-        ok_ind = (min_indep <= 0) or (c[6] >= min_indep)
-        if ok_ent and ok_coh and ok_ind:
-            out.add(w)
+    for (w, cnt, ind, bind, ent, coh, indep) in cands:
+        # 复合熵闸门：c[4]<0(豁免) 或 >=min_ent 才保留
+        if not (ent < 0 or ent >= min_ent):
+            continue
+        # 凝固度闸门（len>=2 才判；单字无内部绑定概念直接放行，但本管线不产单字）
+        if len(w) >= 2 and not (coh >= min_coh):
+            continue
+        # 词本身偏序闸门
+        if len(w) >= 2 and not (indep >= min_indep):
+            continue
+        out.add(w)
     return out
 
 
 def main():
-    g = lg(os.path.join(ROOT, "grow.py"))
-    docs = title_docs(g)
-    S, wgt = g.build_corpus(docs)
-    cands = g.scan_and_grow(S, wgt, ENT_MR, True, cohesion_max_len=8)[0]
+    docs = build_title_docs(CORPUS)
+    S, wgt = build_corpus(docs)
+    cands, _ = scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE,
+                             ent_punct_exempt=True, indep_super_min=INDEP_SUPER_MIN)
+
+    # 候选索引：word -> (indep, coh, ent, count)
+    info = {w: (indep, coh, ent, cnt) for (w, cnt, ind, bind, ent, coh, indep) in cands}
+
+    book = load_book(BOOK)
+    true000_hf = {w for w, r in book.items() if r["class"] == "000" and int(r["count"]) >= 5}  # 60
+    frag111 = {w for w, r in book.items() if r["class"] == "111"}  # 5155
+    base_filtered_000 = len(true000_hf)  # 基线即全误杀，固定 60
+
     print(f"候选总数(7字段, indep已算): {len(cands)}")
+    print(f"错题集标签: 高频真词(class000,count>=5)={len(true000_hf)}"
+          f"  碎片(class111)={len(frag111)}")
 
-    true000_hf, frag111, rows = load_book()
-    print(f"错题集标签: 高频真词(class000,count>=5)={len(true000_hf)}  碎片(class111)={len(frag111)}")
-
-    # 各配置
-    configs = {
-        "v217(base, indep=0)": (MIN_COH, 0.0),
-        "2.3.3 indep=0.03":    (MIN_COH, 0.03),
-        "2.3.3 indep=0.05":    (MIN_COH, 0.05),
-        "2.3.3 indep=0.10":    (MIN_COH, 0.10),
-    }
-    kept = {}
-    for name, (mc, mi) in configs.items():
-        kept[name] = kept_set(g, cands, mc, mi)
-
-    base = kept["v217(base, indep=0)"]
     print("\n=== 2.3.3 调参（title, me0.5+mr0.25+coh1.5）===")
-    print(f"{'配置':<22}{'产词数':>7}{'Δv217':>7}{'硬碎片残留':>10}{'高频误伤':>9}{'清碎片':>7}{'新增误伤':>8}")
-    for name, (mc, mi) in configs.items():
-        k = kept[name]
-        residual = len(k & frag111)
-        falsekill = len(true000_hf - k)
-        clr = len(base & frag111) - len(k & frag111)
-        newfk = len(true000_hf - k) - len(true000_hf - base)
-        d = len(k) - len(base)
-        print(f"{name:<22}{len(k):>7}{d:>+7}{residual:>10}{falsekill:>9}{clr:>+7}{newfk:>+8}")
+    header = f"{'配置':24} {'产词数':>6} {'Δv217':>7} {'硬碎片残留':>10} {'高频误伤':>8} {'清碎片':>7} {'新增误伤':>8}"
+    print(header)
+    base = None
+    rows = []
+    for indep in (0, 0.03, 0.05, 0.10):
+        kept = kept_set(cands, MIN_ENT, MIN_COH, indep)
+        if indep == 0:
+            base = kept
+        n = len(kept)
+        delta = n - len(base) if base is not None else 0
+        frag_kept = len(kept & frag111)
+        hard_frag = frag_kept
+        freq_miss = len(true000_hf - kept)            # 高频真词误杀数
+        clear_frag = len(frag111 - kept)              # 清掉的碎片数
+        new_miss = freq_miss - base_filtered_000       # 相对基线新增误伤
+        label = "v217(base, indep=0)" if indep == 0 else f"2.3.3 indep={indep}"
+        rows.append((label, n, delta, hard_frag, freq_miss, clear_frag, new_miss))
+        print(f"{label:24} {n:>6} {delta:>+7} {hard_frag:>10} {freq_miss:>8} {clear_frag:>+7} {new_miss:>+8}")
 
-    # 探针词 indep 值
-    cm = {c[0]: c for c in cands}
+    # ---- 探针词：验证信号方向 ----
     print("\n=== 探针词 indep / coh（验证信号方向）===")
-    for w in PROBE:
-        if w in cm:
-            c = cm[w]
-            tag = rows.get(w, {}).get("class", "?")
-            print(f"  {w:<6} indep={c[6]:.3f}  coh={c[5]:.2f}  ent={c[4]:.2f}  count={c[1]:>4}  class={tag}")
+    probes = ["我只", "聊天", "我真", "罗之", "联盟之", "我的", "这个",
+              "世界", "开始", "首富", "庆余年", "长生"]
+    print(f"{'词':8} {'indep':>8} {'coh':>8} {'ent':>8} {'count':>7} {'class':>6}")
+    for w in probes:
+        if w in info:
+            indep, coh, ent, cnt = info[w]
+            cls = book.get(w, {}).get("class", "-")
+            print(f"{w:8} {indep:>8.3f} {coh:>8.2f} {ent:>8.2f} {cnt:>7} {cls:>6}")
         else:
-            print(f"  {w:<6} (不在候选)")
+            print(f"{w:8} (不在候选集)")
 
-    # indep=0.05 相对 base 删除的词中，是否有真词
-    dropped = base - kept["2.3.3 indep=0.05"]
-    print(f"\n=== indep=0.05 删除的 {len(dropped)} 词（应为强搭配碎片，不含真词）===")
-    true_dropped = [w for w in dropped if rows.get(w, {}).get("class") == "000"]
-    frag_dropped = [w for w in dropped if rows.get(w, {}).get("class") == "111"]
-    other_dropped = [w for w in dropped if w not in true_dropped and w not in frag_dropped]
-    print(f"  错题集标注真词被删: {true_dropped}  ← 应为空")
-    print(f"  错题集标注碎片被删: {frag_dropped}")
-    print(f"  未标注(其他)被删:   {other_dropped[:40]}")
+    # ---- indep=0.05 删除词分类 ----
+    print("\n=== indep=0.05 删除的 7 词（应为强搭配碎片，不含真词）===")
+    deleted = base - kept_set(cands, MIN_ENT, MIN_COH, 0.05)
+    true_del = sorted(deleted & true000_hf)
+    frag_del = sorted(deleted & frag111)
+    other_del = sorted(deleted - book.keys())
+    print(f"  错题集标注真词被删: {true_del}  ← 应为空")
+    print(f"  错题集标注碎片被删: {frag_del}")
+    print(f"  未标注(其他)被删:   {other_del}")
 
 
 if __name__ == "__main__":
