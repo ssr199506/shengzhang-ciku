@@ -15,3 +15,5 @@ __pycache__/
 *wordcloud*.html
 *wordcloud*.json
 *_wordcloud.png
+# 付费商用语料（含版权），严禁入库
+PAID_CORPUS.csv
