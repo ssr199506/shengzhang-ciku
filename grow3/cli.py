@@ -23,6 +23,7 @@ from .config import PipelineConfig
 from .gates import gate_chain
 from .ir import Word
 from .output import write_word_csv
+from .probe import AuditLog, AuditStage
 from .scan import build_corpus, clean, scan_once
 from .signals.ent import cal_ent
 from .signals.cohesion import cal_cohesion
@@ -66,6 +67,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--spe-rescue", type=float, default=0.0, help="SPE 救援阈值")
     ap.add_argument("--rsr-rescue", type=float, default=0.0, help="RSR 救援阈值")
     ap.add_argument("--rsr-mode", choices=["mean", "max"], default="mean")
+    ap.add_argument("--min-super-cnt", type=int, default=2, help="超词最小出现次数（SPE/RSR 遍历门槛，默认 2）")
     ap.add_argument("--ent-merge-ratio", type=float, default=0.25)
     ap.add_argument("--title-col", type=int, default=0)
     ap.add_argument("--intro-col", type=int, default=1)
@@ -79,8 +81,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return ap
 
 
-def run_pipeline(prefix, docs, raw_texts, cfg, out_dir):
-    """对一条管线（title/intro）跑完整管道，返回最终 Word 列表。"""
+def run_pipeline(prefix, docs, raw_texts, cfg, out_dir, audit=None):
+    """对一条管线（title/intro）跑完整管道，返回最终 Word 列表。
+
+    audit 非空时记录每级闸门进/出/差集（Step 7 审计探针）。
+    """
     use_punct = not cfg.no_punct_ent if hasattr(cfg, 'no_punct_ent') else True
     ent_merge_ratio = 0.0 if getattr(cfg, 'no_merge', False) else cfg.ent_merge_ratio
     S, wgt = build_corpus([(clean(t, use_punct), w) for t, w in docs])
@@ -103,9 +108,19 @@ def run_pipeline(prefix, docs, raw_texts, cfg, out_dir):
         for wd in words:
             wd.spe = spe_map.get(wd.word, -1.0)
             wd.rsr = rsr_map.get(wd.word, -1.0)
-    kept = gate_chain(words, cfg)
+    if audit is not None:
+        audit.config = cfg.to_dict()
+        audit.stages.append(_stage_header(prefix, len(words)))
+    kept = gate_chain(words, cfg, audit)
+    if audit is not None:
+        audit.final_count = len(kept)
     write_word_csv(kept, os.path.join(out_dir, f'{prefix}_wordfreq.csv'))
     return kept
+
+
+def _stage_header(prefix: str, n: int) -> AuditStage:
+    """审计首条：候选总数（扫描产物），方便串起整条链。"""
+    return AuditStage(f"scan({prefix})", n, n, removed=[])
 
 
 def main(argv=None) -> int:
@@ -120,6 +135,7 @@ def main(argv=None) -> int:
         spe_rescue=args.spe_rescue,
         rsr_rescue=args.rsr_rescue,
         rsr_mode=args.rsr_mode,
+        min_super_cnt=args.min_super_cnt,
         title_col=args.title_col,
         intro_col=args.intro_col,
         no_cloud=args.no_cloud,
@@ -153,9 +169,24 @@ def main(argv=None) -> int:
     title_raw = [t for t, i, w in dedup if t]
     intro_raw = [i for t, i, w in dedup if i]
 
-    kt = run_pipeline('title', title_docs, title_raw, cfg, args.out)
+    audit = AuditLog() if args.audit else None
+    kt = run_pipeline('title', title_docs, title_raw, cfg, args.out, audit)
     if args.intro_col >= 0 and intro_docs:
         run_pipeline('intro', intro_docs, intro_raw, cfg, args.out)
+
+    if args.audit:
+        audit.dump(args.audit)
+        print(f'[grow3] 审计日志已写出: {args.audit}', file=sys.stderr)
+        # 链路摘要：候选N → 各门 → 最终E
+        chain = [f"候选{audit.stages[0].before}"]
+        for s in audit.stages[1:]:
+            if s.removed:
+                chain.append(f"{s.gate}→{s.after}(删{len(s.removed)})")
+            elif s.rescued:
+                chain.append(f"{s.gate}→{s.after}(救{len(s.rescued)})")
+            else:
+                chain.append(f"{s.gate}→{s.after}")
+        print(f'[grow3] 链路: {" → ".join(chain)} → 最终{audit.final_count}', file=sys.stderr)
 
     print(f'[grow3] 默认闸门({cfg.gate_summary()}) → 标题词 {len(kt)} 个', file=sys.stderr)
     return 0

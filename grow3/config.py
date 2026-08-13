@@ -54,3 +54,18 @@ class PipelineConfig:
             rsr = f"&rsr>={self.rsr_rescue}" if self.rsr_rescue > 0 else ""
             parts.append(f"spe-rescue>={self.spe_rescue}{rsr}")
         return " + ".join(parts) if parts else "no-gate"
+
+    def to_dict(self) -> dict:
+        """全部旋钮快照，供审计日志 config 字段使用。"""
+        return {
+            "ent_merge_ratio": self.ent_merge_ratio,
+            "min_ent": self.min_ent,
+            "min_cohesion": self.min_cohesion,
+            "min_indep": self.min_indep,
+            "spe_rescue": self.spe_rescue,
+            "rsr_rescue": self.rsr_rescue,
+            "rsr_mode": self.rsr_mode,
+            "min_super_cnt": self.min_super_cnt,
+            "cohesion_max_len": self.cohesion_max_len,
+            "bind_thresh": self.bind_thresh,
+        }
