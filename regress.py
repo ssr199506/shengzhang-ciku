@@ -135,10 +135,10 @@ def main():
             g_ok += 1
     g_total = len(MATRIX)
 
-    # 3) 扫描逻辑 60 组对拍
-    report.append("\n[3/3] verify_grow3 扫描逻辑 60 组对拍")
+    # 3) 扫描逻辑 60 组对拍（verify.py 经 grow.py 兼容层调用 grow3）
+    report.append("\n[3/3] verify 扫描逻辑 60 组对拍（grow.py 兼容层 → grow3）")
     try:
-        r = subprocess.run([sys.executable, "verify_grow3.py", "30"],
+        r = subprocess.run([sys.executable, "verify.py", "30"],
                            cwd=ROOT, capture_output=True, text=True)
         verify_ok = (r.returncode == 0)
         for line in r.stdout.strip().splitlines():
