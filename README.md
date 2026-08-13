@@ -189,6 +189,28 @@ python -m grow3.cli corpus.csv ... --audit out.json
 --rsr-rescue / --rsr-mode / --min-super-cnt / --ent-merge-ratio / --title-col /
 --intro-col / --no-cloud / --top / --maxlen / --audit`。
 
+### ★ 面板最强组合（2026-08-13 实测）
+
+```
+--min-ent 0.5 --cohesion 1.5 --indep 0.05 --spe-rescue 0.8   （ent-merge-ratio 0.25）
+```
+
+**历史上 2.4.x 从未与 indep 组合过**——grow3 面板化后首次验证：`ent+coh+indep+SPE救援`
+同时拿到两大家族的好处：indep 清强搭配碎片 + SPE 救援救回 000 层真词（死在熵门的
+庆余年/康熙/首富 等）。实测 **5232 词**，000 层 15 个真词召回 10/15（与纯 SPE 持平），
+碎片控制优于纯 SPE（14 vs 17）。
+
+| 组合 | 词数 | 000真词 | 碎片剩 |
+|---|---:|---:|---:|
+| ent+coh+indep | 5149 | 0/15 | 4 |
+| ent+spe0.8 | 5895 | 10/15 | 17 |
+| **ent+coh+indep+spe0.8** | **5232** | **10/15** | **14** |
+| +rsr8 收紧 | 5220 | 9/15 | 12 |
+
+取舍结论：`rsr8` 收紧丢 1 真词（捡属性）换 2 碎片（聊天/联盟之），不划算；`spe` 阈值
+0.6~0.8 为平台期（0.9 起 000 真词掉 2），取 0.8 保守。搜索脚本：`exp/find_best_combo.py`。
+注：010 层位置独留真词（完美世界/重燃 等）所有组合均救不回（需位置固定度信号，未纳入 grow3）。
+
 ---
 
 ## 七、回归守护
