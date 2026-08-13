@@ -114,17 +114,19 @@ def _wsum(pos_list, wgt):
 
 
 def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True,
-                  cohesion_max_len=8):
+                  cohesion_max_len=8, indep_super_min=1):
     """核心：单字种子 → 跳跃式 BFS 枚举最大重复 → 独立出现次数判据。
 
     标点哨兵 PUNCT 在 S 中作为邻居参与熵计算，但对生长/独立判定当墙（与 SEP 同视），
     且不进入候选词、字频表、词云。
 
     返回 (candidates, charfreq)
-        candidates: [(word, count, independent, binding, compound_ent, cohesion)]，
+        candidates: [(word, count, independent, binding, compound_ent, cohesion, indep)]，
                     len(word)>=2 且 independent>=1
           cohesion = 该词内部字间互信息（凝固度）最小值：min_split log2(count(w)·N / (count左·count右))；
                     纯 CJK 词内部绑定越强值越大；len<2 或 >cohesion_max_len 时为 N/A(0.0)。
+          indep   = 偏序独立频次占比 = (count - 被更长候选词覆盖的权重) / count ∈ [0,1]；
+                    强搭配碎片(我只/聊天)≈0，真词(世界/开始)≥0.13，单字无内部概念→N/A(0.0)。
         charfreq:   {char: 加权出现次数}（不含 PUNCT/SEP）
     """
     n = len(S)
@@ -205,6 +207,7 @@ def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True
             seen.add(ch)  # 按串标记；单字本身不会从别处再生成
 
     candidates = []
+    cand_lst = {}            # word -> 该候选词的全部出现位置列表（偏序独立频次用）
 
     while queue:
         w, lst = queue.popleft()
@@ -308,6 +311,7 @@ def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True
 
         if len(w) >= 2 and independent >= 1:
             candidates.append((w, count_w, independent, binding, compound_ent, cohesion))
+            cand_lst[w] = lst
 
         # 继续生长：右邻字符分支（加权 count >= 2 才可能成为词）
         for c, (pl, wsum) in groups.items():
@@ -317,16 +321,48 @@ def scan_and_grow(S, wgt, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True
                     seen.add(wc)
                     queue.append((wc, pl))
 
-    return candidates, charfreq
+    # ---- 2.3.3 词本身偏序：独立频次占比（indep）----
+    # 定义 w 的「偏序独立频次」= 不被任何更长候选词覆盖的出现次数（按权重）。
+    #   covered(w) = Σ 被更长候选 s 包裹的 w 出现权重；
+    #   indep_ratio(w) = (count_w - covered(w)) / count_w  ∈ [0,1]。
+    # 强搭配碎片（我只/聊天/我真/罗之）几乎总嵌在更长候选里 → indep≈0；
+    # 真词（世界/开始）大量独立出现 → indep 高（≥0.13）；
+    # 词缀型碎片（我的/联盟之）超词稀疏未被候选 → indep 仍高（补集偏序留待下版）。
+    # 覆盖判定：s 的每次出现 [p, p+len(s)) 内部、起点 q 落在其内且 q+len(sub)<=p+len(s) 的子候选
+    # sub 视为在该次出现被 s 覆盖；每个 sub 的每次出现只计一次覆盖权重（去重）。
+    pos_start = {}
+    for w, lst in cand_lst.items():
+        for p in lst:
+            pos_start.setdefault(p, []).append((w, len(w)))
+    covered = {}
+    covered_occ = set()
+    for s, lst_s in cand_lst.items():
+        Ls = len(s)
+        for p in lst_s:
+            for q in range(p, p + Ls):
+                for sub, sublen in pos_start.get(q, []):
+                    if sub == s:
+                        continue
+                    if q + sublen <= p + Ls:
+                        key = (sub, q)
+                        if key not in covered_occ:
+                            covered_occ.add(key)
+                            covered[sub] = covered.get(sub, 0) + wgt[q]
+    final = []
+    for (w, count_w, independent, binding, compound_ent, cohesion) in candidates:
+        cov = covered.get(w, 0.0)
+        indep_ratio = (count_w - cov) / count_w if count_w > 0 else 0.0
+        final.append((w, count_w, independent, binding, compound_ent, cohesion, indep_ratio))
+    return final, charfreq
 
 
 # ---------------------------------------------------------------- 输出层
 def write_word_csv(path, candidates):
     with open(path, 'w', newline='', encoding='utf-8-sig') as f:
         wr = csv.writer(f)
-        wr.writerow(['word', 'count', 'independent', 'bind', 'len', 'compound_entropy', 'cohesion'])
-        for w, cnt, ind, bind, ent, coh in sorted(candidates, key=lambda x: (-x[1], x[0])):
-            wr.writerow([w, cnt, ind, round(bind, 4), len(w), round(ent, 4), round(coh, 4)])
+        wr.writerow(['word', 'count', 'independent', 'bind', 'len', 'compound_entropy', 'cohesion', 'indep'])
+        for w, cnt, ind, bind, ent, coh, indep in sorted(candidates, key=lambda x: (-x[1], x[0])):
+            wr.writerow([w, cnt, ind, round(bind, 4), len(w), round(ent, 4), round(coh, 4), round(indep, 4)])
 
 
 def write_char_csv(path, charfreq):
@@ -345,7 +381,7 @@ def render_cloud(path, candidates, top_n=200, maxlen=0, font_path=None):
     if font_path is None:
         font_path = _pick_font()
     freqs = {}
-    for w, cnt, ind, bind, _, _ in candidates:
+    for w, cnt, ind, bind, _, _, _ in candidates:
         if maxlen and len(w) > maxlen:
             continue
         freqs[w] = cnt
@@ -401,12 +437,12 @@ def detect_header(row, title_col, intro_col):
 
 
 # ---------------------------------------------------------------- 管线
-def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0, no_cloud=False, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True, min_cohesion=0.0):
+def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, standalone=False, bind_thresh=1.0, min_ent=0.0, no_cloud=False, ent_merge_ratio=ENT_MERGE_RATIO, ent_punct_exempt=True, min_cohesion=0.0, min_indep=0.0, indep_super_min=1):
     S, wgt = build_corpus(docs)
     if not S:
         return
-    print(f'[{prefix}] 语料字符数(去重后): {len(S)}  run数: {S.count(SEP)+1 if S else 0}', file=sys.stderr)
-    candidates, charfreq = scan_and_grow(S, wgt, ent_merge_ratio, ent_punct_exempt)
+    print(f'[{prefix}] 语料字符数(去存后): {len(S)}  run数: {S.count(SEP)+1 if S else 0}', file=sys.stderr)
+    candidates, charfreq = scan_and_grow(S, wgt, ent_merge_ratio, ent_punct_exempt, indep_super_min=indep_super_min)
     # 前后集中度闸门（bind）：binding > 阈值的词视为寄生词剔除；默认 1.0 = 不过滤（基线）
     if bind_thresh < 1.0:
         candidates = [c for c in candidates if c[3] <= bind_thresh]
@@ -415,12 +451,18 @@ def process_corpus(prefix, docs, raw_texts, out_dir, top_n, maxlen, font_path, s
         before = len(candidates)
         candidates = [c for c in candidates if c[4] < 0 or c[4] >= min_ent]
         print(f'[{prefix}] 熵过滤: {before} → {len(candidates)} 词 (阈值 {min_ent})', file=sys.stderr)
-    # 凝固度闸门（第二信号，与熵取 AND）：c[5] 为 cohesion(PMI)。单字/超长词无内部绑定概念，直接放行；
-    # 其余要求 内部互信息 >= 阈值，否则视为"字间松散搭配/词缀碎片"(如之巅/我能)滤除。
-    if min_cohesion > 0:
+    # 凝固度 + 偏序独立频次 联合门（2.3.3，与熵取 AND）：多字候选需 内部凝固(coh≥th) 且 不被更长词包裹(indep≥ε)。
+    # 单字无内部绑定概念→放行；补集偏序型碎片(我的/联盟之)因超词稀疏未被候选→indep 仍高→本门暂不滤（留待下版）。
+    if min_cohesion > 0 or min_indep > 0:
         before = len(candidates)
-        candidates = [c for c in candidates if len(c[0]) < 2 or c[5] >= min_cohesion]
-        print(f'[{prefix}] 凝固度过滤: {before} → {len(candidates)} 词 (阈值 {min_cohesion})', file=sys.stderr)
+        def _pass(c):
+            if len(c[0]) < 2:
+                return True
+            ok_coh = (min_cohesion <= 0) or (c[5] >= min_cohesion)
+            ok_ind = (min_indep <= 0) or (c[6] >= min_indep)
+            return ok_coh and ok_ind
+        candidates = [c for c in candidates if _pass(c)]
+        print(f'[{prefix}] 凝固度/偏序门: {before} → {len(candidates)} 词 (coh {min_cohesion}, indep {min_indep})', file=sys.stderr)
     print(f'[{prefix}] 候选词: {len(candidates)}  去重字符: {len(charfreq)}', file=sys.stderr)
     write_word_csv(os.path.join(out_dir, f'{prefix}_wordfreq.csv'), candidates)
     write_char_csv(os.path.join(out_dir, f'{prefix}_charfreq.csv'), charfreq)
@@ -465,6 +507,10 @@ def main():
                     help='合并触发比：两侧都有汉字邻居时，少侧不空次数/多侧不空次数 低于此值（默认 0.25，不空=汉字邻居次数+PUNCT次数）→ 两侧邻居分布合并算总熵；否则用 min(左熵,右熵)')
     ap.add_argument('--cohesion', type=float, default=0.0,
                     help='凝固度(PMI)闸门阈值（0=关闭）：候选词内部字间互信息最小值 >= 阈值才保留，否则视为松散搭配/词缀碎片滤除（如之巅/我能）；与熵闸门取 AND。仅对 len>=2 词生效，单字/超长词直接放行')
+    ap.add_argument('--indep', type=float, default=0.0,
+                    help='偏序独立频次占比闸门阈值（0=关闭）：与 --cohesion 取 AND，多字候选需 不被更长候选词包裹的占比 >= 阈值 才保留，否则视为强搭配碎片(我只/聊天/我真/罗之)滤除；真词(世界/开始 indep≥0.13)不受影响。2.3.3 新增第六信号（词本身偏序）')
+    ap.add_argument('--indep-super-min', type=int, default=1,
+                    help='偏序独立频次：统计"包裹"时用频次 >= 此值的候选词作超词（默认 1=全部候选）；调高可抑制低频超词噪声')
     ap.add_argument('--no-cloud', action='store_true',
                     help='跳过词云/PNG/互动HTML渲染（仅生成 CSV），用于批量调参加速')
     args = ap.parse_args()
@@ -501,8 +547,8 @@ def main():
     title_raw = [t for t, i, w in dedup if t]
     intro_raw = [i for t, i, w in dedup if i]
 
-    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, min_cohesion=args.cohesion)
-    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, min_cohesion=args.cohesion)
+    process_corpus('title', title_docs, title_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, min_cohesion=args.cohesion, min_indep=args.indep, indep_super_min=args.indep_super_min)
+    process_corpus('intro', intro_docs, intro_raw, args.out, args.top, args.maxlen, None, standalone=args.standalone, bind_thresh=args.bind, min_ent=args.min_ent, no_cloud=args.no_cloud, ent_merge_ratio=ent_merge_ratio, ent_punct_exempt=not args.no_punct_exempt, min_cohesion=args.cohesion, min_indep=args.indep, indep_super_min=args.indep_super_min)
     print(f'完成，输出目录: {args.out}')
 
 
