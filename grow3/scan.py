@@ -57,20 +57,58 @@ def _wsum(pos_list, wgt):
     return sum(wgt[p] for p in pos_list)
 
 
+def build_ngram_freq(S: str, wgt: dict, max_len: int = 8):
+    """一次性加权 n-gram 频次统计（仅 CJK run 内，PUNCT/SEP 当墙）。
+
+    返回 (freq, N_char)：
+      freq[sub] = 子串 sub 在语料中的加权出现次数（按 run 权重累计，含长度 1 的单字）；
+      N_char   = 全部 CJK 字符的加权总数（PMI 概率归一化用的语料规模，= sum(w_run * run_len)）。
+
+    逐字照抄 2.1.17 build_ngram_freq。支撑凝固度（内部 PMI）查表。
+    """
+    freq = {}
+    N_char = 0
+    n = len(S)
+    i = 0
+    while i < n:
+        ch = S[i]
+        if ch == SEP or ch == PUNCT:
+            i += 1
+            continue
+        j = i
+        while j < n and S[j] != SEP and S[j] != PUNCT:
+            j += 1
+        run = S[i:j]
+        w_run = wgt[i]
+        L = len(run)
+        N_char += w_run * L
+        top = min(L, max_len)
+        for a in range(L):
+            for b in range(a + 1, min(L, a + top) + 1):
+                sub = run[a:b]
+                freq[sub] = freq.get(sub, 0) + w_run
+        i = j
+    return freq, N_char
+
+
 # ---------------------------------------------------------------- 一次扫描
 def scan_once(S: str, wgt: dict, ent_merge_ratio: float = ENT_MERGE_RATIO,
-              ent_punct_exempt: bool = True) -> Tuple[ScanContext, List[Word]]:
+              ent_punct_exempt: bool = True, cohesion_max_len: int = 8
+              ) -> Tuple[ScanContext, List[Word]]:
     """单字种子 → 跳跃式 BFS 枚举最大重复 → 独立出现次数判据。
 
     返回 (ScanContext, words)：
-    - ctx 承载跨信号共享的中间量（cand_lst/cand_count/charfreq/pos_single/n_char）；
-    - words 是 Word 列表，已填 word/count/independent/binding，ent 暂为 -1.0，
-      由 signals/ent.py 后续只读填充。
+    - ctx 承载跨信号共享的中间量（cand_lst/cand_count/charfreq/ngram_freq/pos_single/n_char）；
+    - words 是 Word 列表，已填 word/count/independent/binding，ent/cohesion 暂为默认值，
+      由 signals/*.py 后续只读填充。
 
     ent_punct_exempt 当前恒为 True（PUNCT 恒作抽象邻居参与熵，不可关闭，与 main 一致），
     保留形参以对齐接口。
     """
     n = len(S)
+
+    # 凝固度支撑：一次性加权 n-gram 频次表（仅 CJK run），同时得 N_char（PMI 分母）
+    ngram_freq, n_char = build_ngram_freq(S, wgt, cohesion_max_len)
 
     # 单字扫描：pos_single[char]=位置；charfreq 按权重累加
     pos_single: Dict[str, List[int]] = {}
@@ -191,7 +229,8 @@ def scan_once(S: str, wgt: dict, ent_merge_ratio: float = ENT_MERGE_RATIO,
         cand_lst=ctx_cand_lst,
         cand_count=ctx_cand_count,
         charfreq=charfreq,
+        ngram_freq=ngram_freq,
         pos_single=pos_single,
-        n_char=len(charfreq),
+        n_char=n_char,
     )
     return ctx, words

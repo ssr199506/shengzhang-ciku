@@ -25,6 +25,7 @@ from .ir import Word
 from .output import write_word_csv
 from .scan import build_corpus, clean, scan_once
 from .signals.ent import cal_ent
+from .signals.cohesion import cal_cohesion
 
 
 def load_csv(path, has_header):
@@ -83,10 +84,14 @@ def run_pipeline(prefix, docs, raw_texts, cfg, out_dir):
     S, wgt = build_corpus([(clean(t, use_punct), w) for t, w in docs])
     if not S:
         return []
-    ctx, words = scan_once(S, wgt, ent_merge_ratio, True)
+    ctx, words = scan_once(S, wgt, ent_merge_ratio, True, cfg.cohesion_max_len)
     ent_map = cal_ent(ctx, ent_merge_ratio)
     for wd in words:
         wd.ent = ent_map.get(wd.word, -1.0)
+    if cfg.min_cohesion > 0:
+        coh_map = cal_cohesion(ctx, cfg.cohesion_max_len)
+        for wd in words:
+            wd.cohesion = coh_map.get(wd.word, 0.0)
     kept = gate_chain(words, cfg)
     write_word_csv(kept, os.path.join(out_dir, f'{prefix}_wordfreq.csv'))
     return kept
