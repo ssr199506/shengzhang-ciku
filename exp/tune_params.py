@@ -14,7 +14,8 @@ import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HERE = os.path.dirname(os.path.abspath(__file__))
-CSV = os.path.join(ROOT, "PAID_CORPUS.csv")
+# 语料为付费商用数据，不入库：请将语料命名为 corpus.csv 置于仓库根
+CSV = os.path.join(ROOT, "corpus.csv")
 TUNE = os.path.join(HERE, "tune")
 
 MIN_ENTS = [0.3, 0.5, 0.7, 0.9, 1.1]

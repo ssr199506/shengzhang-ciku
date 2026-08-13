@@ -5,7 +5,8 @@
 >
 > 生成方法：用 `git show <分支>:grow.py` 取出各历史真值版本（绝不用当前工作树），
 > 各自以"标准语料调用"跑出词表，复制其 `title_wordfreq.csv` 为本目录文件。
-> 语料：`PAID_CORPUS.csv`
+> 语料：`corpus.csv`（付费商用数据，**不入库**，需自备并置于仓库根；
+> 金标准 CSV 已入库，为从语料抽取的统计词表，不含完整书名/简介原文）
 > 标准调用公共参数：`--title-col 2 --intro-col -1 --ent-merge-ratio 0.25 --no-cloud`
 > （书名在 col 2；无简介；合并比 0.25；跳过词云）。
 

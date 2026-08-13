@@ -9,3 +9,9 @@ out_real/
 __pycache__/
 *.pyc
 *.pyo
+
+# 词云/互动词云产物：含从语料 title 提取的完整书名，属付费数据衍生内容，严禁入库
+*wordcloud*.data.js
+*wordcloud*.html
+*wordcloud*.json
+*_wordcloud.png

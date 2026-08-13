@@ -16,7 +16,8 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-CSV = os.path.join(ROOT, "PAID_CORPUS.csv")
+# 语料为付费商用数据，不入库：请将语料命名为 corpus.csv 置于仓库根
+CSV = os.path.join(ROOT, "corpus.csv")
 EXP = HERE
 TITLE_COL = "2"
 

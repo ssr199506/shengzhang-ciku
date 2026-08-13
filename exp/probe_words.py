@@ -5,9 +5,8 @@ import sys, csv, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import grow
 
-CSV = grow.os.path.join(grow.os.path.dirname(grow.os.path.dirname(os.path.abspath(__file__))),
-    "PAID_CORPUS.csv") \
-    if False else r"d:/agent/work/workbuddy/history/生长词库_2026-08-11/PAID_CORPUS.csv"
+# 语料为付费商用数据，不入库：请将语料命名为 corpus.csv 置于仓库根
+CSV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "corpus.csv")
 
 TITLE_COL = 2
 rows = list(csv.reader(open(CSV, encoding="utf-8-sig", newline="")))

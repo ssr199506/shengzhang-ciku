@@ -22,7 +22,8 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 GOLDEN_DIR = os.path.join(ROOT, "exp", "golden")
-CORPUS = os.path.join(ROOT, "PAID_CORPUS.csv")
+# 语料为付费商用数据，不入库：请将语料命名为 corpus.csv 置于仓库根
+CORPUS = os.path.join(ROOT, "corpus.csv")
 COMMON = ["--title-col", "2", "--intro-col", "-1",
           "--ent-merge-ratio", "0.25", "--no-cloud"]
 
