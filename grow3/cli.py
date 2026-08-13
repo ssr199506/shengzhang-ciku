@@ -26,6 +26,7 @@ from .output import write_word_csv
 from .scan import build_corpus, clean, scan_once
 from .signals.ent import cal_ent
 from .signals.cohesion import cal_cohesion
+from .signals.indep import cal_indep
 
 
 def load_csv(path, has_header):
@@ -92,6 +93,10 @@ def run_pipeline(prefix, docs, raw_texts, cfg, out_dir):
         coh_map = cal_cohesion(ctx, cfg.cohesion_max_len)
         for wd in words:
             wd.cohesion = coh_map.get(wd.word, 0.0)
+    if cfg.min_indep > 0:
+        indep_map = cal_indep(ctx)
+        for wd in words:
+            wd.indep = indep_map.get(wd.word, -1.0)
     kept = gate_chain(words, cfg)
     write_word_csv(kept, os.path.join(out_dir, f'{prefix}_wordfreq.csv'))
     return kept
