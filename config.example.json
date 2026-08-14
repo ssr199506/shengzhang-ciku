@@ -20,7 +20,7 @@
   "min_role": 0.0,
   "role_rescue": 0.7,
   "asym_enabled": true,
-  "asym_rescue": 2.0,
+  "asym_rescue": 2.6,
   "min_asym": 0.0,
 
   "no_cloud": false,

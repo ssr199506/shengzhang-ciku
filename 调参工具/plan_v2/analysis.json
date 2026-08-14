@@ -1,0 +1,72 @@
+{
+  "L1": {
+    "role": {
+      "max_FG": 0.9112,
+      "max_FG_w": "真不是",
+      "min_BT": 0.1827,
+      "min_BT_w": "之王",
+      "band": -0.7285,
+      "clean_possible": false,
+      "n_FG": 31,
+      "n_BT": 24,
+      "pure_rescuable": [
+        "舰娘",
+        "迪迦"
+      ]
+    },
+    "asym": {
+      "max_FG": 6.3114,
+      "max_FG_w": "真不是",
+      "min_BT": -1.4331,
+      "min_BT_w": "世界",
+      "band": -7.7445,
+      "clean_possible": false,
+      "n_FG": 31,
+      "n_BT": 24,
+      "pure_rescuable": [
+        "庆余年",
+        "港片",
+        "舰娘",
+        "迪迦"
+      ]
+    },
+    "asym_realneg": {
+      "n": 77,
+      "true": [
+        "世界",
+        "系统"
+      ],
+      "bad": [
+        "一个",
+        "之子",
+        "之开",
+        "我的",
+        "我能",
+        "游之",
+        "的我",
+        "聊天",
+        "这个"
+      ]
+    }
+  },
+  "L3": {
+    "n_add": 264,
+    "alias_rate": 0.6287878787878788
+  },
+  "L4": {
+    "sym_diff": 1,
+    "diff_true": [],
+    "diff_bad": [
+      "星空之"
+    ]
+  },
+  "L5": {
+    "welded": [
+      "荒古"
+    ],
+    "signal_short": [
+      "捡属性",
+      "首辅"
+    ]
+  }
+}
