@@ -72,6 +72,8 @@ class Word:
     indep: float = -1.0        # 词本身偏序（候选/位置结构复用）
     spe: float = -1.0          # 超词位置熵（纵向包含秩序）
     rsr: float = -1.0          # 补集偏序
+    role: float = -1.0         # 偏序图角色迭代主干度（0~1，含 U2 退化；-1=无超词豁免）
+    asym: float = -1.0         # 条件熵不对称性（正大=被锁定=附件；-1=无超词豁免）
 
     @property
     def length(self) -> int:

@@ -14,6 +14,15 @@
   "rsr_mode": "mean",
   "min_super_cnt": 2,
 
+  "role_enabled": true,
+  "role_max_depth": -1,
+  "role_alpha": 0.85,
+  "min_role": 0.0,
+  "role_rescue": 0.7,
+  "asym_enabled": true,
+  "asym_rescue": 2.0,
+  "min_asym": 0.0,
+
   "no_cloud": false,
   "title_complement": true,
   "standalone": false,

@@ -9,7 +9,7 @@
 """
 from __future__ import annotations
 
-from . import ent, cohesion, indep, spe_rsr
+from . import ent, cohesion, indep, spe_rsr, role, asym
 
 # 信号注册表：名称 -> (模块, 计算函数名, 对应的 Word 字段)
 SIGNAL_REGISTRY = {
@@ -18,4 +18,6 @@ SIGNAL_REGISTRY = {
     "indep": (indep, "cal_indep", "indep"),
     "spe": (spe_rsr, "cal_spe", "spe"),
     "rsr": (spe_rsr, "cal_rsr", "rsr"),
+    "role": (role, "solve_roles", "role"),
+    "asym": (asym, "cal_asym", "asym"),
 }

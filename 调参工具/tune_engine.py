@@ -35,6 +35,8 @@ from grow3.signals.ent import cal_ent
 from grow3.signals.cohesion import cal_cohesion
 from grow3.signals.indep import cal_indep
 from grow3.signals.spe_rsr import cal_spe_rsr
+from grow3.signals.role import solve_roles
+from grow3.signals.asym import cal_asym
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CORPUS = os.path.join(ROOT, "corpus.csv")
@@ -67,6 +69,10 @@ BASE = {
     "min_indep": 0.05, "spe_rescue": 0.0, "rsr_rescue": 0.0,
     "bind_thresh": 1.0, "rsr_mode": "mean", "min_super_cnt": 2,
     "no_punct_ent": False, "no_merge": False, "cohesion_max_len": 8,
+    # 纯结构实验信号（默认全关，不影响既有评估）
+    "role_enabled": False, "role_max_depth": -1, "role_alpha": 0.85,
+    "min_role": 0.0, "role_rescue": 0.0, "asym_enabled": False, "asym_rescue": 0.0,
+    "min_asym": 0.0,
 }
 
 # 各参数扫描取值（coarse = 粗跑大步长；fine = 精跑细步长）。连续参数在 GRID_FINE 里
@@ -79,6 +85,10 @@ GRID_COARSE = {
     "spe_rescue":     [0.0, 0.5, 1.0, 1.5, 2.0],
     "rsr_rescue":     [0.0, 10.0, 20.0, 30.0, 40.0, 50.0],
     "bind_thresh":    [0.5, 0.7, 0.9, 1.0],
+    "min_role":       [0.0, 0.3, 0.5, 0.7, 0.9],
+    "role_rescue":    [0.0, 0.5, 0.7, 0.9],
+    "asym_rescue":    [0.0, 1.0, 1.5, 2.0, 2.5],
+    "min_asym":       [0.0, 0.5, 1.0, 1.5, 2.0],
 }
 # 精跑细档：数字 = 上限值，步长见名称
 GRID_FINE = {
@@ -89,6 +99,10 @@ GRID_FINE = {
     "spe_rescue":      ("lin", 2.0, 0.05),
     "rsr_rescue":      ("lin", 50.0, 5.0),
     "bind_thresh":     ("lin", 1.0, 0.05),
+    "min_role":        ("lin", 1.0, 0.05),
+    "role_rescue":     ("lin", 1.0, 0.05),
+    "asym_rescue":     ("lin", 3.0, 0.1),
+    "min_asym":        ("lin", 3.0, 0.1),
 }
 # 离散参数取值
 DISCRETE = {
@@ -154,8 +168,10 @@ class Engine:
         key = (self._scan_key(cfg), name,
                cfg.get("ent_merge_ratio", 0.25) if name == "ent" else None,
                cfg.get("cohesion_max_len", 8) if name == "coh" else None,
-               cfg.get("min_super_cnt", 2) if name in ("spe", "rsr") else None,
-               cfg.get("rsr_mode", "mean") if name in ("spe", "rsr") else None)
+               cfg.get("min_super_cnt", 2) if name in ("spe", "rsr", "role", "asym") else None,
+               cfg.get("rsr_mode", "mean") if name in ("spe", "rsr") else None,
+               cfg.get("role_max_depth", -1) if name == "role" else None,
+               cfg.get("role_alpha", 0.85) if name == "role" else None)
         if key in self._sig_cache:
             return self._sig_cache[key]
         ctx, words = self.scan(cfg)
@@ -177,6 +193,15 @@ class Engine:
             for wd in words:
                 wd.spe = sm.get(wd.word, -1.0)
                 wd.rsr = rm.get(wd.word, -1.0)
+        elif name == "role":
+            m = solve_roles(ctx, cfg.get("role_max_depth", -1),
+                            cfg.get("min_super_cnt", 2), cfg.get("role_alpha", 0.85))
+            for wd in words:
+                wd.role = m.get(wd.word, -1.0)
+        elif name == "asym":
+            m = cal_asym(ctx, cfg.get("min_super_cnt", 2))
+            for wd in words:
+                wd.asym = m.get(wd.word, -1.0)
         self._sig_cache[key] = True
         return True
 
@@ -199,6 +224,10 @@ class Engine:
             self._sig("indep", cfg)
         if cfg["spe_rescue"] > 0 or cfg["rsr_rescue"] > 0:
             self._sig("spe", cfg)
+        if cfg["role_enabled"] or cfg["min_role"] > 0 or cfg["role_rescue"] > 0:
+            self._sig("role", cfg)
+        if cfg["asym_enabled"] or cfg["asym_rescue"] > 0 or cfg["min_asym"] > 0:
+            self._sig("asym", cfg)
 
         kept = gate_chain(words, PipelineConfig.from_dict(cfg))
         if cfg["bind_thresh"] < 1.0:
@@ -252,7 +281,8 @@ def fmt(res):
     tag = (f"me{c['min_ent']:.2g} mr{c['ent_merge_ratio']:.2g} "
            f"coh{c['min_cohesion']:.2g} indep{c['min_indep']:.2g} "
            f"spe{c['spe_rescue']:.2g} rsr{c['rsr_rescue']:.2g} "
-           f"bind{c['bind_thresh']:.2g}")
+           f"role{c['min_role']:.2g}/{c['role_rescue']:.2g} "
+           f"asym{c['asym_rescue']:.2g} bind{c['bind_thresh']:.2g}")
     sc = " ".join(f"{k}={res['score'][k]:.3f}" for k in res["score"])
     return (f"{res['n_kept']:>5} keep{res['keep_hit']:>2}/{len(KEEP)} "
             f"filt{res['filt_hit']:>2}/{len(FILT)} "

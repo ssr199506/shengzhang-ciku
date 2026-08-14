@@ -29,6 +29,8 @@ from .signals.ent import cal_ent
 from .signals.cohesion import cal_cohesion
 from .signals.indep import cal_indep
 from .signals.spe_rsr import cal_spe_rsr
+from .signals.role import solve_roles
+from .signals.asym import cal_asym
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 仓库根（默认 config.json 所在）
 
@@ -88,6 +90,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="互动词云单文件内联 HTML（无需外部 data.js）")
     ap.add_argument("--title-complement", action="store_true", default=None,
                     help="开启补集（未收录书名）功能：注入补集 UI 补丁（依赖独立模块 title_index 注入数据）")
+    ap.add_argument("--role", action="store_true", default=None,
+                    help="计算 role 列（偏序图角色迭代，含 U2 退化；实验信号）")
+    ap.add_argument("--role-max-depth", type=int, default=None,
+                    help="role 迭代深度：1=U2，N=迭代 N 帧，-1=不动点")
+    ap.add_argument("--role-alpha", type=float, default=None, help="role 阻尼系数")
+    ap.add_argument("--min-role", type=float, default=None, help="role 主干度闸门阈值（<=0 关闭）")
+    ap.add_argument("--role-rescue", type=float, default=None,
+                    help="role 主干度救援阈值（<=0 关闭；从被滤集捞回 role>=thresh 的候选）")
+    ap.add_argument("--asym", action="store_true", default=None,
+                    help="计算 asym 列（条件熵不对称性；实验信号）")
+    ap.add_argument("--asym-rescue", type=float, default=None,
+                    help="asym 救援阈值（<=0 关闭；从被滤集捞回 asym>=thresh 的候选）")
+    ap.add_argument("--min-asym", type=float, default=None,
+                    help="asym 过滤门阈值（<=0 关闭；asym>=thresh 才留，低值=碎片）")
     ap.add_argument("--audit", default=None, help="审计日志输出路径")
     return ap
 
@@ -109,6 +125,14 @@ _ARG_TO_CFG = {
     "no_merge": "no_merge",
     "no_cloud": "no_cloud",
     "title_complement": "title_complement",
+    "role": "role_enabled",
+    "role_max_depth": "role_max_depth",
+    "role_alpha": "role_alpha",
+    "min_role": "min_role",
+    "role_rescue": "role_rescue",
+    "asym": "asym_enabled",
+    "asym_rescue": "asym_rescue",
+    "min_asym": "min_asym",
     "top": "top_n",
     "maxlen": "maxlen",
     "standalone": "standalone",
@@ -151,13 +175,27 @@ def run_pipeline(prefix, docs, raw_texts, cfg, out_dir, audit=None):
         for wd in words:
             wd.spe = spe_map.get(wd.word, -1.0)
             wd.rsr = rsr_map.get(wd.word, -1.0)
+    if cfg.role_enabled or cfg.min_role > 0 or cfg.role_rescue > 0:
+        role_map = solve_roles(ctx, cfg.role_max_depth, cfg.min_super_cnt, cfg.role_alpha)
+        for wd in words:
+            wd.role = role_map.get(wd.word, -1.0)
+    if cfg.asym_enabled or cfg.asym_rescue > 0 or cfg.min_asym > 0:
+        asym_map = cal_asym(ctx, cfg.min_super_cnt)
+        for wd in words:
+            wd.asym = asym_map.get(wd.word, -1.0)
     if audit is not None:
         audit.config = cfg.to_dict()
         audit.stages.append(_stage_header(prefix, len(words)))
     kept = gate_chain(words, cfg, audit)
     if audit is not None:
         audit.final_count = len(kept)
-    write_word_csv(kept, os.path.join(out_dir, f'{prefix}_wordfreq.csv'))
+    extra_cols = []
+    if cfg.role_enabled or cfg.min_role > 0 or cfg.role_rescue > 0:
+        extra_cols.append("role")
+    if cfg.asym_enabled or cfg.asym_rescue > 0 or cfg.min_asym > 0:
+        extra_cols.append("asym")
+    write_word_csv(kept, os.path.join(out_dir, f'{prefix}_wordfreq.csv'),
+                   extra_cols=extra_cols or None)
 
     # ---- 词云渲染（显示层，失败不致命；产物含完整书名，.gitignore 已锁死防入库）----
     if not cfg.no_cloud:

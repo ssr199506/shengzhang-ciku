@@ -68,6 +68,62 @@ def gate_chain(words: List[Word], cfg: PipelineConfig,
         filtered.extend(removed)
         cur = passed
 
+    # ---- 角色主干度门（实验：纯结构，偏序图角色迭代，含 U2 退化；默认关闭）----
+    if cfg.min_role > 0:
+        passed, removed = [], []
+        for w in cur:
+            if w.role < 0 or w.role >= cfg.min_role:
+                passed.append(w)
+            else:
+                removed.append(w)
+        if audit is not None:
+            audit.stages.append(AuditStage(
+                "role", len(cur), len(passed), removed=[w.word for w in removed]))
+        filtered.extend(removed)
+        cur = passed
+
+    # ---- 不对称性过滤门（实验：asym 低/负=碎片，asym>=thresh 才留；默认关闭）----
+    if cfg.min_asym > 0:
+        passed, removed = [], []
+        for w in cur:
+            if w.asym < 0 or w.asym >= cfg.min_asym:
+                passed.append(w)
+            else:
+                removed.append(w)
+        if audit is not None:
+            audit.stages.append(AuditStage(
+                "asym", len(cur), len(passed), removed=[w.word for w in removed]))
+        filtered.extend(removed)
+        cur = passed
+
+    # ---- 不对称性救援门（实验：大正=被虚词修饰的主干=救援信号；默认关闭）----
+    # 当 min_role>0 时，救援词还须过 role 主干度底线（救援+净化组合）。
+    if cfg.asym_rescue > 0:
+        rescued, still = [], []
+        for w in filtered:
+            ok = w.asym >= cfg.asym_rescue
+            if cfg.min_role > 0:
+                ok = ok and (w.role >= cfg.min_role)
+            (rescued if ok else still).append(w)
+        if audit is not None:
+            audit.stages.append(AuditStage(
+                "asym_rescue", len(filtered), len(rescued),
+                rescued=[w.word for w in rescued]))
+        cur = cur + rescued
+        filtered = still
+
+    # ---- 角色主干度救援门（实验：从被滤集捞回 role 高的候选；默认关闭）----
+    if cfg.role_rescue > 0:
+        rescued, still = [], []
+        for w in filtered:
+            (rescued if w.role >= cfg.role_rescue else still).append(w)
+        if audit is not None:
+            audit.stages.append(AuditStage(
+                "role_rescue", len(filtered), len(rescued),
+                rescued=[w.word for w in rescued]))
+        cur = cur + rescued
+        filtered = still
+
     # ---- 条件救援门（从被滤集中捞回）----
     if cfg.spe_rescue > 0:
         rescued, still = [], []
@@ -84,5 +140,6 @@ def gate_chain(words: List[Word], cfg: PipelineConfig,
                 "spe_rescue", len(filtered), len(rescued),
                 rescued=[w.word for w in rescued]))
         cur = cur + rescued
+        filtered = still
 
     return cur

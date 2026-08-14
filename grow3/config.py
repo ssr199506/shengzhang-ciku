@@ -37,6 +37,16 @@ class PipelineConfig:
     # ---- 凝固度边界 ----
     cohesion_max_len: int = 8         # 超过此长度的词不参与凝固度计算（N/A 放行）
 
+    # ---- 纯结构实验信号（feat/role-asym，默认全部关闭，不影响既有行为）----
+    role_enabled: bool = False        # 计算 role 列（偏序图角色迭代，含 U2 退化）
+    role_max_depth: int = -1          # role 迭代深度：1=U2，N=迭代 N 帧，-1=不动点
+    role_alpha: float = 0.85          # 阻尼（α<1 保证收敛）
+    min_role: float = 0.0             # role 主干度闸门阈值；<=0 关闭，role>=thresh 才留
+    role_rescue: float = 0.0          # role 主干度救援阈值；<=0 关闭，从被滤集捞回 role>=thresh
+    asym_enabled: bool = False        # 计算 asym 列（条件熵不对称性）
+    asym_rescue: float = 0.0          # asym 救援阈值；<=0 关闭，从被滤集捞回 asym>=thresh 的候选
+    min_asym: float = 0.0             # asym 过滤门阈值；<=0 关闭，asym>=thresh 才留（低值=碎片）
+
     # ---- 输入 / 输出 ----
     title_col: int = 0                # 书名列号（0-based）
     intro_col: int = 1                # 简介列号；-1 表示无简介
@@ -57,6 +67,14 @@ class PipelineConfig:
         if self.spe_rescue > 0:
             rsr = f"&rsr>={self.rsr_rescue}" if self.rsr_rescue > 0 else ""
             parts.append(f"spe-rescue>={self.spe_rescue}{rsr}")
+        if self.min_role > 0:
+            parts.append(f"role>={self.min_role}")
+        if self.min_asym > 0:
+            parts.append(f"asym>={self.min_asym}")
+        if self.role_rescue > 0:
+            parts.append(f"role-rescue>={self.role_rescue}")
+        if self.asym_rescue > 0:
+            parts.append(f"asym-rescue>={self.asym_rescue}")
         return " + ".join(parts) if parts else "no-gate"
 
     def to_dict(self) -> dict:
@@ -71,6 +89,14 @@ class PipelineConfig:
             "rsr_mode": self.rsr_mode,
             "min_super_cnt": self.min_super_cnt,
             "cohesion_max_len": self.cohesion_max_len,
+            "role_enabled": self.role_enabled,
+            "role_max_depth": self.role_max_depth,
+            "role_alpha": self.role_alpha,
+            "min_role": self.min_role,
+            "role_rescue": self.role_rescue,
+            "asym_enabled": self.asym_enabled,
+            "asym_rescue": self.asym_rescue,
+            "min_asym": self.min_asym,
             "bind_thresh": self.bind_thresh,
             "no_punct_ent": self.no_punct_ent,
             "no_merge": self.no_merge,
