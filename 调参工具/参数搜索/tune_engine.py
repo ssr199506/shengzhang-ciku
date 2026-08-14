@@ -26,7 +26,7 @@ import os
 import sys
 from collections import Counter
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from grow3.config import PipelineConfig
 from grow3.gates import gate_chain
@@ -38,7 +38,7 @@ from grow3.signals.spe_rsr import cal_spe_rsr
 from grow3.signals.role import solve_roles
 from grow3.signals.asym import cal_asym
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CORPUS = os.path.join(ROOT, "corpus.csv")
 TITLE_COL = 2
 
