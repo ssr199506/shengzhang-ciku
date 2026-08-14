@@ -408,3 +408,15 @@ exp/
 4. 每完成一步 commit 一次，message 写明「等价验证：XXX=YYY」。
 5. 从回收站恢复的文件若报 Permission denied / 文件「被删」，先
    `attrib -H -R <路径> /S /D` 清除 Windows 隐藏属性再操作。
+
+---
+
+## 十一、方法出处
+
+- **复合熵（min(左熵,右熵)）**：独立设计。这是项目之初"词依附于固定邻居"这一
+  观察的自然延伸（词的外部自由度判据），属独立发展的方法；后续在应对具体过滤困难时
+  上网调研，才确认与"新词发现"领域已有的左右信息熵 / Accessor Variety 思路一致，
+  属独立实现（重复造轮子），非借鉴。
+- **凝固度（min-PMI）**：外来灵感。源自"新词发现"领域的字间互信息信号，
+  调研参考：`bubblewu/build-dict` · `zhanzecheng/Chinese_segment_augment` ·
+  `bojone/word-discovery` · SmoothNLP。本项目独立实现，未使用上述项目代码。
