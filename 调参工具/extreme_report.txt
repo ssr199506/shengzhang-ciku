@@ -1,0 +1,15 @@
+极值                            词数 keepfilt000frag coll   scoreA  异常标记
+  min_ent=2.0                 2266   27   1  0   3  921  0.5202       坍缩44% 删2883
+  min_cohesion=10.0                 331    3   0  0   0 1502  0.2894     ⚠️ 坍缩6% 删4818
+  min_indep=1.0                 3411   12   1  0   0 1281  0.3736       坍缩66% 删1738
+  spe_rescue=2.0                 5149   36   1  0   4  159  0.6449             删0
+  rsr_rescue=50.0                5179   36   3  5   7  143  0.6345             删0
+  ent_merge_ratio=0.9                 6154   36   9 15   6  132  0.6234      膨胀120% 删0
+  bind_thresh=0.5                 3671   24   1  0   2  682  0.5115             删1478
+  no_punct_ent=True                4773   35   2  0   4  197  0.6192             删381
+  no_merge=True                5071   34   1  0   4  235  0.6215             删78
+  cohesion_max_len=4                   4812   36   1  0   4  191  0.6430             删337
+
+报告: SANDBOX_ROOT\调参产物\extreme\extreme_report.csv
+removed_*.csv 是被删词清单（前 200），人工目检哪类词先牺牲。
+判断：flag 为 ⚠️ 的值所在参数 → 合法域该端是危险区，差分搜索时 clamp 在这里。

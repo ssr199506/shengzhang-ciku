@@ -33,7 +33,7 @@ def select_cloud_words(candidates, top_n=200, maxlen=0):
 
 
 def emit_interactive(prefix, out_dir, candidates, raw_texts, top_n, maxlen, layout,
-                     standalone=False):
+                     standalone=False, complement_script=None):
     """写出互动词云。
 
     standalone=True  : 单文件内联 HTML（数据嵌进 HTML，双击即开，便于携带）。
@@ -79,11 +79,11 @@ def emit_interactive(prefix, out_dir, candidates, raw_texts, top_n, maxlen, layo
     with open(os.path.join(out_dir, f'{prefix}_wordcloud.json'), 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False)
     if standalone:
-        html = build_cloud_html(data)
+        html = build_cloud_html(data, complement_script)
     else:
         with open(os.path.join(out_dir, f'{prefix}_wordcloud.data.js'), 'w', encoding='utf-8') as f:
             f.write('window.GROW_DATA = ' + json.dumps(data, ensure_ascii=False) + ';')
-        html = build_shell_html(prefix)
+        html = build_shell_html(prefix, complement_script)
     with open(os.path.join(out_dir, f'{prefix}_wordcloud.html'), 'w', encoding='utf-8') as f:
         f.write(html)
     total = sum(m['count'] for m in matches.values())
@@ -271,13 +271,21 @@ stage.addEventListener('click', () => {
 '''
 
 
-def build_cloud_html(data):
-    """内联单文件版：数据直接嵌入 HTML（双击即开、便于携带）。"""
+def build_cloud_html(data, complement_script=None):
+    """内联单文件版：数据直接嵌入 HTML（双击即开、便于携带）。
+
+    complement_script: 可选的第二段 <script>（如补集 UI 补丁），为 None 时等同原版。
+    """
     payload = json.dumps(data, ensure_ascii=False)
-    return _CLOUD_HEAD + _CLOUD_ENGINE.replace('__DATA_INIT__', payload)
+    html = _CLOUD_HEAD + _CLOUD_ENGINE.replace('__DATA_INIT__', payload)
+    return html + (complement_script or '')
 
 
-def build_shell_html(prefix):
-    """外壳版：数据来自外部 data.js，HTML 自身恒定体积、可复用。"""
+def build_shell_html(prefix, complement_script=None):
+    """外壳版：数据来自外部 data.js，HTML 自身恒定体积、可复用。
+
+    complement_script: 可选的第二段 <script>（如补集 UI 补丁），为 None 时等同原版。
+    """
     src = f'<script src="{prefix}_wordcloud.data.js"></script>'
-    return _CLOUD_HEAD + src + _CLOUD_ENGINE.replace('__DATA_INIT__', 'window.GROW_DATA || {}')
+    html = _CLOUD_HEAD + src + _CLOUD_ENGINE.replace('__DATA_INIT__', 'window.GROW_DATA || {}')
+    return html + (complement_script or '')

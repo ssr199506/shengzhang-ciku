@@ -86,6 +86,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--maxlen", type=int, default=None, help="词云最大词长过滤（0=不限）")
     ap.add_argument("--standalone", action="store_true", default=None,
                     help="互动词云单文件内联 HTML（无需外部 data.js）")
+    ap.add_argument("--title-complement", action="store_true", default=None,
+                    help="开启补集（未收录书名）功能：注入补集 UI 补丁（依赖独立模块 title_index 注入数据）")
     ap.add_argument("--audit", default=None, help="审计日志输出路径")
     return ap
 
@@ -106,6 +108,7 @@ _ARG_TO_CFG = {
     "no_punct_ent": "no_punct_ent",
     "no_merge": "no_merge",
     "no_cloud": "no_cloud",
+    "title_complement": "title_complement",
     "top": "top_n",
     "maxlen": "maxlen",
     "standalone": "standalone",
@@ -165,7 +168,8 @@ def run_pipeline(prefix, docs, raw_texts, cfg, out_dir, audit=None):
                                   kept, top_n, cfg.maxlen)
             try:
                 emit_interactive(prefix, out_dir, kept, raw_texts, top_n,
-                                 cfg.maxlen, layout, standalone=cfg.standalone)
+                                 cfg.maxlen, layout, standalone=cfg.standalone,
+                                 title_complement=cfg.title_complement)
             except Exception as e:
                 print(f'[{prefix}] 互动词云跳过: {e}', file=sys.stderr)
         except Exception as e:

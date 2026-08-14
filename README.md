@@ -201,6 +201,30 @@ python -m grow3.cli corpus.csv --title-col 2 --intro-col -1 --out out
 python -m grow3.cli corpus.csv ... --audit out.json
 ```
 
+### ★ 标题补集（搜索框不遗漏书名）
+
+闸门会滤掉一批碎片候选词，导致部分书名在词表里"留不下词"。为让搜索框**一个书名都不漏**，工具额外产出「标题索引」：
+
+- 独立模块 `grow3/title_index` 重扫语料拿「词→位置→标题」映射，读 `wordfreq.csv` 得保留词集，
+  对每个书名标 `kept`（有保留词）/ `cand_lost`（候选词被滤）/ `lone`（孤本无候选词）。
+- 每个书名都进入词云数据，搜索框命中后按**折叠项**展示：每个命中词一个折叠项（展开显示产出该词的书名清单，
+  子列表可滚动），末尾固定「列表外书籍」折叠项（展开显示词表外书名，标 `候选被滤` / `孤本`，可点开看产出词）。
+  例：搜「重生」→ 折叠项「重生」「重生之」「列表外书籍」；词表外书籍 0 本时该项展开显示空态。
+- 另输出独立补集表 `{prefix}_complement.csv`（只含 `cand_lost` + `lone` 两类，含 status 与产出候选词）。
+- **开关**：`config.json` 的 `title_complement`（true=开/默认）。关闭后 `run_all.bat` 只跑①不跑②，
+  词云数据不注入 titles，搜索框**自动退回原功能**（平铺词条、点词开匹配面板），补集功能整体不启动。
+
+**一键双步**（先管道、后补集，双击即出；由 `title_complement` 开关控制第二步）：
+
+```bash
+# 双击 run_all.bat   ≡   下面两步：
+python -m grow3.cli --config config.json          # ① 核心管道：词表 + 词云
+python -m grow3.title_index --config config.json  # ② 补集索引：注入词云 + 写 complement.csv
+```
+
+> 模块与核心管道**零耦合**：不修改 scan/cli/cloud/gates/signals 任何一行，可单独跑
+> （`--wordfreq` 指向已有词表、`--no-cloud` 仅写补集表）。
+
 参数（与历史 CLI 对齐）：`--min-ent / --cohesion / --indep / --spe-rescue /
 --rsr-rescue / --rsr-mode / --min-super-cnt / --ent-merge-ratio / --title-col /
 --intro-col / --no-cloud / --top / --maxlen / --audit`。

@@ -1,0 +1,118 @@
+{
+  "weight": "C",
+  "trace": [
+    {
+      "round": 0,
+      "cfg": {
+        "min_ent": 0.0,
+        "ent_merge_ratio": 0.4,
+        "min_cohesion": 8.0,
+        "min_indep": 0.25,
+        "spe_rescue": 1.6,
+        "rsr_rescue": 5.0,
+        "bind_thresh": 1.0,
+        "rsr_mode": "max",
+        "min_super_cnt": 2,
+        "no_punct_ent": false,
+        "no_merge": true,
+        "cohesion_max_len": 6
+      },
+      "score": 0.4139
+    },
+    {
+      "round": 1,
+      "move": "min_cohesion",
+      "to": 6.0,
+      "cfg": {
+        "min_ent": 0.0,
+        "ent_merge_ratio": 0.4,
+        "min_cohesion": 6.0,
+        "min_indep": 0.25,
+        "spe_rescue": 1.6,
+        "rsr_rescue": 5.0,
+        "bind_thresh": 1.0,
+        "rsr_mode": "max",
+        "min_super_cnt": 2,
+        "no_punct_ent": false,
+        "no_merge": true,
+        "cohesion_max_len": 6
+      },
+      "score": 0.5158
+    },
+    {
+      "round": 2,
+      "move": "min_indep",
+      "to": 0.05,
+      "cfg": {
+        "min_ent": 0.0,
+        "ent_merge_ratio": 0.4,
+        "min_cohesion": 6.0,
+        "min_indep": 0.05,
+        "spe_rescue": 1.6,
+        "rsr_rescue": 5.0,
+        "bind_thresh": 1.0,
+        "rsr_mode": "max",
+        "min_super_cnt": 2,
+        "no_punct_ent": false,
+        "no_merge": true,
+        "cohesion_max_len": 6
+      },
+      "score": 0.6059
+    },
+    {
+      "round": 3,
+      "move": "min_indep",
+      "to": 0.1,
+      "cfg": {
+        "min_ent": 0.0,
+        "ent_merge_ratio": 0.4,
+        "min_cohesion": 6.0,
+        "min_indep": 0.1,
+        "spe_rescue": 1.6,
+        "rsr_rescue": 5.0,
+        "bind_thresh": 1.0,
+        "rsr_mode": "max",
+        "min_super_cnt": 2,
+        "no_punct_ent": false,
+        "no_merge": true,
+        "cohesion_max_len": 6
+      },
+      "score": 0.6174
+    },
+    {
+      "round": 4,
+      "move": "min_cohesion",
+      "to": 5.5,
+      "cfg": {
+        "min_ent": 0.0,
+        "ent_merge_ratio": 0.4,
+        "min_cohesion": 5.5,
+        "min_indep": 0.1,
+        "spe_rescue": 1.6,
+        "rsr_rescue": 5.0,
+        "bind_thresh": 1.0,
+        "rsr_mode": "max",
+        "min_super_cnt": 2,
+        "no_punct_ent": false,
+        "no_merge": true,
+        "cohesion_max_len": 6
+      },
+      "score": 0.635
+    }
+  ],
+  "best": {
+    "min_ent": 0.0,
+    "ent_merge_ratio": 0.4,
+    "min_cohesion": 5.5,
+    "min_indep": 0.1,
+    "spe_rescue": 1.6,
+    "rsr_rescue": 5.0,
+    "bind_thresh": 1.0,
+    "rsr_mode": "max",
+    "min_super_cnt": 2,
+    "no_punct_ent": false,
+    "no_merge": true,
+    "cohesion_max_len": 6
+  },
+  "best_score": 0.635
+}

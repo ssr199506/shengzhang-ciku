@@ -1,0 +1,98 @@
+{
+  "weight": "A",
+  "trace": [
+    {
+      "round": 0,
+      "cfg": {
+        "min_ent": 1.25,
+        "ent_merge_ratio": 0.5,
+        "min_cohesion": 4.0,
+        "min_indep": 0.1,
+        "spe_rescue": 0.85,
+        "rsr_rescue": 25.0,
+        "bind_thresh": 1.0,
+        "rsr_mode": "max",
+        "min_super_cnt": 4,
+        "no_punct_ent": false,
+        "no_merge": false,
+        "cohesion_max_len": 8
+      },
+      "score": 0.534
+    },
+    {
+      "round": 1,
+      "move": "min_super_cnt",
+      "to": 8,
+      "cfg": {
+        "min_ent": 1.25,
+        "ent_merge_ratio": 0.5,
+        "min_cohesion": 4.0,
+        "min_indep": 0.1,
+        "spe_rescue": 0.85,
+        "rsr_rescue": 25.0,
+        "bind_thresh": 1.0,
+        "rsr_mode": "max",
+        "min_super_cnt": 8,
+        "no_punct_ent": false,
+        "no_merge": false,
+        "cohesion_max_len": 8
+      },
+      "score": 0.5635
+    },
+    {
+      "round": 2,
+      "move": "min_cohesion",
+      "to": 2.0,
+      "cfg": {
+        "min_ent": 1.25,
+        "ent_merge_ratio": 0.5,
+        "min_cohesion": 2.0,
+        "min_indep": 0.1,
+        "spe_rescue": 0.85,
+        "rsr_rescue": 25.0,
+        "bind_thresh": 1.0,
+        "rsr_mode": "max",
+        "min_super_cnt": 8,
+        "no_punct_ent": false,
+        "no_merge": false,
+        "cohesion_max_len": 8
+      },
+      "score": 0.5881
+    },
+    {
+      "round": 3,
+      "move": "min_ent",
+      "to": 1.05,
+      "cfg": {
+        "min_ent": 1.05,
+        "ent_merge_ratio": 0.5,
+        "min_cohesion": 2.0,
+        "min_indep": 0.1,
+        "spe_rescue": 0.85,
+        "rsr_rescue": 25.0,
+        "bind_thresh": 1.0,
+        "rsr_mode": "max",
+        "min_super_cnt": 8,
+        "no_punct_ent": false,
+        "no_merge": false,
+        "cohesion_max_len": 8
+      },
+      "score": 0.6131
+    }
+  ],
+  "best": {
+    "min_ent": 1.05,
+    "ent_merge_ratio": 0.5,
+    "min_cohesion": 2.0,
+    "min_indep": 0.1,
+    "spe_rescue": 0.85,
+    "rsr_rescue": 25.0,
+    "bind_thresh": 1.0,
+    "rsr_mode": "max",
+    "min_super_cnt": 8,
+    "no_punct_ent": false,
+    "no_merge": false,
+    "cohesion_max_len": 8
+  },
+  "best_score": 0.6131
+}

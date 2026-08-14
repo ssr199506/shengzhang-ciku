@@ -26,6 +26,8 @@ GOLDEN_DIR = os.path.join(ROOT, "exp", "golden")
 CORPUS = os.path.join(ROOT, "corpus.csv")
 COMMON = ["--title-col", "2", "--intro-col", "-1",
           "--ent-merge-ratio", "0.25", "--no-cloud"]
+# 中间词表用沙箱内临时目录（不外溢到系统 %TEMP%）
+TMP_WORK = os.path.join(ROOT, "out_tmp")
 
 # (name, 额外 CLI 参数, golden 文件名)
 MATRIX = [
@@ -76,7 +78,8 @@ def _load_words(path):
 def _run_golden(name, args, golden_file, report):
     """跑一个 golden 组合，对比词集，返回 (passed, line)。"""
     gold_path = os.path.join(GOLDEN_DIR, golden_file)
-    with tempfile.TemporaryDirectory() as td:
+    os.makedirs(TMP_WORK, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=TMP_WORK) as td:
         cmd = [sys.executable, "-m", "grow3.cli", CORPUS] + COMMON + args + ["--out", td]
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:

@@ -69,9 +69,17 @@ def _to_legacy(candidates: List[Word]) -> list:
 
 def emit_interactive(prefix: str, out_dir: str, candidates: List[Word],
                      raw_texts: List[str], top_n: int, maxlen: int, layout,
-                     standalone: bool = False) -> None:
-    """包装 interactive_cloud.emit_interactive（外壳 HTML + data.js / 单文件内联）。"""
+                     standalone: bool = False, title_complement: bool = False) -> None:
+    """包装 interactive_cloud.emit_interactive（外壳 HTML + data.js / 单文件内联）。
+
+    title_complement=True 时，从独立模块取补集 UI 补丁，注入 HTML 末尾（第二段 script）。
+    补集数据为独立模块在 emit 之后另行注入 data.js，本层只负责 UI 补丁的接入。
+    """
     import interactive_cloud
+    complement_script = None
+    if title_complement:
+        from . import title_index
+        complement_script = title_index.complement_script()
     interactive_cloud.emit_interactive(
         prefix, out_dir, _to_legacy(candidates), raw_texts, top_n, maxlen,
-        layout, standalone=standalone)
+        layout, standalone=standalone, complement_script=complement_script)

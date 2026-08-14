@@ -44,6 +44,7 @@ class PipelineConfig:
     maxlen: int = 8                   # 候选词最大长度
     no_cloud: bool = False           # 跳过词云渲染（默认渲染，与历史 main 对齐；产物含书名勿入库）
     standalone: bool = False         # 互动词云单文件内联 HTML（双击即开，无需外部 data.js）
+    title_complement: bool = True    # 补集（未收录书名）功能：生成时注入补集 UI 补丁；关闭则 HTML 字节级等同功能前
     bind_thresh: float = 1.0          # 前后集中度闸门；>=1.0 表示关闭（基线）
 
     def gate_summary(self) -> str:

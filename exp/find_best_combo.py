@@ -22,6 +22,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CORPUS = os.path.join(ROOT, "corpus.csv")
 COMMON = ["--title-col", "2", "--intro-col", "-1",
           "--ent-merge-ratio", "0.25", "--no-cloud"]
+# 中间词表用沙箱内临时目录（不外溢到系统 %TEMP%）
+TMP_WORK = os.path.join(ROOT, "out_tmp")
 
 # ---- 评估集 ----
 TRUE_000 = ['庆余年', '康熙', '首富', '刺客', '围棋', '迪迦', '谍战', '舰娘',
@@ -50,7 +52,8 @@ def load(path):
 
 
 def run(args):
-    with tempfile.TemporaryDirectory() as td:
+    os.makedirs(TMP_WORK, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=TMP_WORK) as td:
         subprocess.run([sys.executable, "-m", "grow3.cli", CORPUS] + COMMON + args + ["--out", td],
                        check=True, stderr=subprocess.DEVNULL)
         return load(os.path.join(td, "title_wordfreq.csv"))

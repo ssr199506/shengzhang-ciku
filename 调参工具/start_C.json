@@ -1,0 +1,1 @@
+{"min_ent": 0.0, "ent_merge_ratio": 0.4, "min_cohesion": 8.0, "min_indep": 0.25, "spe_rescue": 1.6, "rsr_rescue": 5.0, "bind_thresh": 1.0, "rsr_mode": "max", "min_super_cnt": 2, "no_punct_ent": false, "no_merge": true, "cohesion_max_len": 6}
