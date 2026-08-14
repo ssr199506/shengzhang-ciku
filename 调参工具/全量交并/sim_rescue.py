@@ -23,7 +23,7 @@ import os
 import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 SIGNAL_JSON = os.path.join(ROOT, "调参产物", "plan_v2", "_signals", "title_signals.json")
 REPORT = os.path.join(ROOT, "调参产物", "plan_v2", "重跑关键处_边界余量审计.md")

@@ -37,8 +37,9 @@ import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, ROOT)                           # grow3
-sys.path.insert(0, os.path.join(ROOT, "调参工具"))  # run_full_union / signal_bank
+sys.path.insert(0, ROOT)                                       # grow3
+sys.path.insert(0, os.path.join(ROOT, "调参工具"))              # signal_bank
+sys.path.insert(0, os.path.join(ROOT, "调参工具", "全量交并"))   # run_full_union
 
 from grow3.config import PipelineConfig
 from signal_bank.bank import SignalBank, bank_default_cfg

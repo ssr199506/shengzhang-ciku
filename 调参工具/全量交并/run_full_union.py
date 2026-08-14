@@ -35,7 +35,7 @@ import os
 import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 仓库根
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # 仓库根
 TOOL = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(ROOT, "调参产物", "fullrun_role")
 PAST_BASE = os.path.join(ROOT, "调参产物", "fullrun", "base", "title_wordfreq.csv")
