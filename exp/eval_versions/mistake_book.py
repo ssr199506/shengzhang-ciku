@@ -22,7 +22,8 @@
 import importlib.util, csv, os, json, collections
 
 EV = os.path.dirname(os.path.abspath(__file__))
-CSV = r"PROJECT_ROOT\PAID_CORPUS.csv"
+BASE = os.path.dirname(os.path.dirname(EV))  # 仓库根
+CSV = os.path.join(BASE, "corpus.csv")  # 付费语料，自备并命名为 corpus.csv（不入库）
 MIN_ENT = 0.5
 ENT_MR = 0.25
 POS_FIXED = 0.80

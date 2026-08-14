@@ -6,7 +6,8 @@
 import importlib.util, csv, os, sys, json
 
 EV = os.path.dirname(os.path.abspath(__file__))
-CSV = r"PROJECT_ROOT\PAID_CORPUS.csv"
+BASE = os.path.dirname(os.path.dirname(EV))  # 仓库根
+CSV = os.path.join(BASE, "corpus.csv")  # 付费语料，自备并命名为 corpus.csv（不入库）
 
 # ---- 旧金标准（照抄 cmp_cohesion.py，供参考但将被批判性使用）----
 SHOULD_KEEP = ["吞噬星空","一人之下","长生修仙","万族","斗破苍穹","诛仙","史记","无限恐怖",

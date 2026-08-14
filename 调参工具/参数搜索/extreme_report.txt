@@ -10,6 +10,6 @@
   no_merge=True                5071   34   1  0   4  235  0.6215             删78
   cohesion_max_len=4                   4812   36   1  0   4  191  0.6430             删337
 
-报告: SANDBOX_ROOT\调参产物\extreme\extreme_report.csv
+报告: 调参产物/extreme/extreme_report.csv
 removed_*.csv 是被删词清单（前 200），人工目检哪类词先牺牲。
 判断：flag 为 ⚠️ 的值所在参数 → 合法域该端是危险区，差分搜索时 clamp 在这里。

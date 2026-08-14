@@ -6,7 +6,7 @@
 import csv, os, sys
 
 EV = os.path.dirname(os.path.abspath(__file__))
-BASE = r"PROJECT_ROOT"
+BASE = os.path.dirname(os.path.dirname(EV))  # 仓库根
 SRC = os.path.join(BASE, "out_real", "title_wordfreq.csv")
 MB = os.path.join(EV, "mistake_book.csv")
 DST = os.path.join(BASE, "out_real", "title_wordfreq_annotated.csv")
