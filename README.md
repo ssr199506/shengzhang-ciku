@@ -39,9 +39,9 @@ CSV(title,intro) ──► 清洗(纯CJK+标点哨兵) ──► build_corpus �
 
 ## 〇·1、效果预览
 
-默认参数（me0.5 + mr0.4 + coh1.5 + indep0.05）下从起点精品小说 8887 本书名提取的高频词预览：
+默认参数（me0.5 + mr0.4 + coh1.5 + indep0.05）下从书名语料提取的高频词预览：
 
-![词云预览](docs/assets/title_wordcloud.png)
+![词云预览](https://raw.githubusercontent.com/ssr199506/shengzhang-ciku/main/docs/assets/title_wordcloud.png)
 
 > 图中仅为纯高频词（如「重生」「系统」「穿越」「无限」等网文题材词），不含完整书名、不含语料文件名、不含个人路径——属于可公开的统计成果。
 
